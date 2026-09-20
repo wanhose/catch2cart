@@ -6,6 +6,7 @@ import {
   parseTorecaProductTitle,
   parseTorecaStock,
   isTorecaGradedProduct,
+  isTorecaMetalCardProduct,
   selectTorecaStateA,
 } from '../src/providers/toreca.ts';
 
@@ -34,6 +35,17 @@ test('rejects graded and slabbed products', () => {
   assert.equal(
     isTorecaGradedProduct('鑑定品 アリアドス CHR S8b 205/184'),
     true,
+  );
+});
+
+test('rejects Metal Card products that reuse a collector number', () => {
+  assert.equal(
+    isTorecaMetalCardProduct('英語版)Mew ex 205/165 (151 Metal Card) ミュウex'),
+    true,
+  );
+  assert.equal(
+    isTorecaMetalCardProduct('ミュウex SAR SV2a 205/165 【KK】'),
+    false,
   );
 });
 

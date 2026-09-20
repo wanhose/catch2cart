@@ -38,6 +38,11 @@ export function isTorecaGradedProduct(title: string | null | undefined) {
   );
 }
 
+/** Toreca also lists Pokémon TCG Metal Cards with the same number/total. */
+export function isTorecaMetalCardProduct(title: string | null | undefined) {
+  return /\bmetal\s*card\b|メタル\s*カード/i.test(normalizeWhitespace(title));
+}
+
 export function parseTorecaPrice(text: string | null | undefined) {
   const match = normalizeWhitespace(text).match(/[¥￥]\s*([\d,]+)/);
   return match ? Number(match[1].replaceAll(',', '')) : null;
@@ -131,7 +136,11 @@ export async function searchToreca(page: Page, searchName: string) {
     )
     .then((items) =>
       items
-        .filter((item) => !isTorecaGradedProduct(item.title))
+        .filter(
+          (item) =>
+            !isTorecaGradedProduct(item.title) &&
+            !isTorecaMetalCardProduct(item.title),
+        )
         .map((item) => ({
           ...parseTorecaProductTitle(item.title),
           url: item.href,

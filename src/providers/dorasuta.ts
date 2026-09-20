@@ -515,7 +515,7 @@ async function readCartEntries(page) {
   });
 
   const entries = await page.evaluate(() => {
-    const result = [];
+    const result = new Map();
 
     for (const link of document.querySelectorAll(
       'a[href*="/pokemon-card/product?pid="]',
@@ -560,15 +560,33 @@ async function readCartEntries(page) {
             ? textQuantity
             : null;
 
-      result.push({
-        productId: pid,
-        url: href,
-        productName: link.textContent?.replace(/\s+/g, ' ').trim() ?? '',
-        quantity,
-      });
+      const productName = link.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+      const previous = result.get(pid);
+
+      if (!previous) {
+        result.set(pid, {
+          productId: pid,
+          url: href,
+          productName,
+          quantity,
+        });
+        continue;
+      }
+
+      // Dorasuta renders both an image link and a title link for each
+      // product. Keep the same cart line once, but prefer the link carrying
+      // the product identity needed by the wishlist matcher.
+      if (!previous.productName && productName) {
+        previous.productName = productName;
+        previous.url = href;
+      }
+
+      if (previous.quantity === null && quantity !== null) {
+        previous.quantity = quantity;
+      }
     }
 
-    return result;
+    return [...result.values()];
   });
 
   return entries;
