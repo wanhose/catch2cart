@@ -293,8 +293,6 @@ async function main() {
 
     setInitialCartCount(initialCartCount);
 
-    outputLog(`Dorasuta initial cart count: ${initialCartCount ?? 0}`);
-
     dorasutaCartEntries = await readCartEntries(dorasutaPage);
     cartQuantities = new Map(
       dorasutaCartEntries.map((entry) => [entry.productId, entry.quantity]),
