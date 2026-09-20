@@ -31,7 +31,10 @@ import { buildJapaneseSearchName, validatePokemonDataset } from './cards.ts';
 import { collectCardmarketCardsWithCache } from './inputs/cardmarket.ts';
 import { loadProductCache } from './product-cache.ts';
 import { selectProviderOffers } from './providers/strategy.ts';
-import type { ProviderCartEntry } from './providers/matching.ts';
+import {
+  matchProviderProduct,
+  type ProviderCartEntry,
+} from './providers/matching.ts';
 import { PROVIDER_REGISTRY } from './providers/registry.ts';
 import type { ProviderOffer } from './providers/types.ts';
 import {
@@ -330,6 +333,19 @@ async function main() {
     outputLog('Toreca cart products read: ' + torecaCartEntries.length);
   }
 
+  const initialCartEntries: ProviderCartEntry[] = [
+    ...dorasutaCartEntries,
+    ...manaSourceCartEntries,
+    ...paoCartEntries,
+    ...torecaCartEntries,
+  ];
+  const isCoveredByAnyCart = (card) =>
+    initialCartEntries.some(
+      (entry) =>
+        entry.quantity >= card.quantity &&
+        matchProviderProduct(card, entry).kind !== 'none',
+    );
+
   startDashboard(cards.length);
 
   const summary: Record<string, number> = {};
@@ -465,6 +481,11 @@ async function main() {
       (async () => {
         for (let i = 0; i < cards.length; i++) {
           await waitForProviderTurn(i);
+          if (isCoveredByAnyCart(cards[i])) {
+            recordProviderCard(i, 'dorasuta', 'ALREADY_IN_CART');
+            finishProviderTurn(i);
+            continue;
+          }
           if (blockedProviders.has('dorasuta')) {
             recordProviderCard(i, 'dorasuta', 'PROVIDER_BLOCKED');
             finishProviderTurn(i);
@@ -598,6 +619,11 @@ async function main() {
       (async () => {
         for (let i = 0; i < cards.length; i++) {
           await waitForProviderTurn(i);
+          if (isCoveredByAnyCart(cards[i])) {
+            recordProviderCard(i, 'manasource', 'ALREADY_IN_CART');
+            finishProviderTurn(i);
+            continue;
+          }
           try {
             const result = await processManaSourceCard(
               manaSourcePage,
@@ -708,6 +734,11 @@ async function main() {
       (async () => {
         for (let i = 0; i < cards.length; i++) {
           await waitForProviderTurn(i);
+          if (isCoveredByAnyCart(cards[i])) {
+            recordProviderCard(i, 'pao', 'ALREADY_IN_CART');
+            finishProviderTurn(i);
+            continue;
+          }
           try {
             const result = await processPaoCard(
               paoPage,
@@ -801,6 +832,11 @@ async function main() {
       (async () => {
         for (let i = 0; i < cards.length; i++) {
           await waitForProviderTurn(i);
+          if (isCoveredByAnyCart(cards[i])) {
+            recordProviderCard(i, 'toreca', 'ALREADY_IN_CART');
+            finishProviderTurn(i);
+            continue;
+          }
           try {
             const result = await processTorecaCard(
               torecaPage,
@@ -872,6 +908,23 @@ async function main() {
       let manaSourcePreflightStatus: string | null = null;
       let paoPreflightStatus: string | null = null;
       let torecaPreflightStatus: string | null = null;
+
+      if (isCoveredByAnyCart(cards[i])) {
+        const alreadyInCartProviders = [
+          'dorasuta',
+          'manasource',
+          'pao',
+          'toreca',
+        ];
+
+        for (const provider of alreadyInCartProviders) {
+          recordProviderCard(i, provider, 'ALREADY_IN_CART');
+        }
+
+        summary.CHEAPEST_ALREADY_IN_CART =
+          (summary.CHEAPEST_ALREADY_IN_CART ?? 0) + 1;
+        continue;
+      }
 
       try {
         const preflightRuns: Promise<unknown>[] = [];

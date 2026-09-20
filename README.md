@@ -101,6 +101,8 @@ This focus is intentional: Japanese singles can sometimes be listed on marketpla
 
 When multiple product providers are selected, the final report reads each cart total and wishlist coverage independently. It also lists the cards added or planned per provider. Totals include products already present in those carts, not only items added during the current run.
 
+Before searching, catch2cart checks all selected provider carts together. A card whose requested quantity is already complete in any one of those carts is marked as already in cart globally and is not searched or added to another provider.
+
 ## Providers
 
 catch2cart separates two provider roles:
