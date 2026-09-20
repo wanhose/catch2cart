@@ -339,10 +339,6 @@ export async function processDorasutaCard(
 
   const inCart = cartQuantities.get(productId);
 
-  updateDashboard({
-    phase: 'Checking current cart',
-  });
-
   if (inCart === null) {
     outputLog(
       '  SKIP: product is in the cart but its quantity could not be read safely.',
