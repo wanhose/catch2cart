@@ -108,8 +108,8 @@ function selectBatch(cards) {
 async function main() {
   startDashboard(0, {
     mode: COMMIT
-      ? 'COMMIT · cart updates enabled'
-      : 'DRY RUN · carts unchanged',
+      ? 'COMMIT · Cart updates enabled'
+      : 'DRY RUN · Carts unchanged',
     phase: 'Connecting to browser',
     status: 'Starting',
   });
@@ -262,8 +262,8 @@ async function main() {
       cards[0].number +
       ')',
     mode: COMMIT
-      ? 'COMMIT · cart updates enabled'
-      : 'DRY RUN · carts unchanged',
+      ? 'COMMIT · Cart updates enabled'
+      : 'DRY RUN · Carts unchanged',
     phase: 'Preparing run',
     status: 'Loading caches',
   });
