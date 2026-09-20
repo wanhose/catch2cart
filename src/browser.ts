@@ -89,9 +89,52 @@ export async function waitForDorasutaSearchGap() {
   lastDorasutaSearchAt = Date.now();
 }
 
-async function isCloudflareChallenge(page) {
+export type CloudflareState =
+  'clear' | 'challenge' | 'turnstile' | 'ip-blocked';
+
+export type CloudflareSignals = {
+  strongChallengeText: boolean;
+  genericChallengeText: boolean;
+  activeChallengeElement: boolean;
+  activeTurnstileFrame: boolean;
+  hasTurnstileToken: boolean;
+  ipBlocked: boolean;
+};
+
+export type CloudflareInspection = CloudflareSignals & {
+  state: CloudflareState;
+  url: string;
+};
+
+/** Classify rendered Cloudflare state. URL tokens are deliberately excluded. */
+export function classifyCloudflareState(
+  signals: CloudflareSignals,
+): CloudflareState {
+  if (signals.ipBlocked) {
+    return 'ip-blocked';
+  }
+
+  if (signals.activeTurnstileFrame && !signals.hasTurnstileToken) {
+    return 'turnstile';
+  }
+
+  if (
+    signals.strongChallengeText ||
+    signals.genericChallengeText ||
+    signals.activeChallengeElement
+  ) {
+    return 'challenge';
+  }
+
+  return 'clear';
+}
+
+/** Read the visible browser state without attempting to solve or bypass it. */
+export async function inspectCloudflare(page): Promise<CloudflareInspection> {
+  const url = page.url();
+
   try {
-    return await page.evaluate(() => {
+    const signals = await page.evaluate(() => {
       const title = document.title ?? '';
       const body = document.body?.innerText ?? '';
       const text = `${title}\n${body}`.slice(0, 20_000);
@@ -132,50 +175,121 @@ async function isCloudflareChallenge(page) {
         Boolean((input as HTMLInputElement).value.trim()),
       );
 
-      return Boolean(
-        strongChallengeText ||
-        genericChallengeText ||
-        activeChallengeElement ||
-        (activeTurnstileFrame &&
-          turnstileInputs.length > 0 &&
-          !hasTurnstileToken),
-      );
+      return {
+        strongChallengeText,
+        genericChallengeText,
+        activeChallengeElement,
+        activeTurnstileFrame,
+        hasTurnstileToken,
+        ipBlocked:
+          /error\s*1006/i.test(text) && /banned your IP address/i.test(text),
+      };
     });
+
+    return {
+      ...signals,
+      state: classifyCloudflareState(signals),
+      url,
+    };
   } catch {
-    return false;
+    return {
+      strongChallengeText: false,
+      genericChallengeText: false,
+      activeChallengeElement: false,
+      activeTurnstileFrame: false,
+      hasTurnstileToken: false,
+      ipBlocked: false,
+      state: 'clear',
+      url,
+    };
   }
 }
 
-/** Wait for a challenge to finish; manual checkbox interaction is supported. */
-async function waitForCloudflare(page) {
-  if (!(await isCloudflareChallenge(page))) {
-    return;
+function cloudflarePhase(state: CloudflareState) {
+  if (state === 'turnstile') {
+    return 'Cloudflare Turnstile pending; complete it in Chromium';
+  }
+
+  return 'Waiting for Cloudflare verification';
+}
+
+function cloudflareLog(state: CloudflareState) {
+  if (state === 'turnstile') {
+    return '  Cloudflare Turnstile is pending. Complete it in Chromium to continue.';
+  }
+
+  return '  Cloudflare verification is in progress.';
+}
+
+function createDorasutaIpBlockedError() {
+  return Object.assign(
+    new Error(
+      'Dorasuta blocked this IP address with Cloudflare error 1006. Stopping without retries.',
+    ),
+    { code: 'DORASUTA_IP_BLOCKED' },
+  );
+}
+
+function throwForCloudflareState(inspection: CloudflareInspection) {
+  if (inspection.state === 'ip-blocked') {
+    throw createDorasutaIpBlockedError();
+  }
+}
+
+/**
+ * Wait for a rendered verification state to clear. It never retries,
+ * navigates, modifies browser fingerprints, or solves a challenge.
+ */
+export async function waitForCloudflare(page) {
+  let inspection = await inspectCloudflare(page);
+  throwForCloudflareState(inspection);
+
+  if (inspection.state === 'clear') {
+    return false;
   }
 
   const startedAt = Date.now();
+  let previousState: CloudflareState | null = null;
+  let settledPolls = 0;
 
-  updateDashboard({
-    phase: 'Waiting for Cloudflare verification',
-  });
-  outputLog('  Cloudflare verification detected.');
-  outputLog(
-    '  Waiting for it to finish; complete the checkbox manually if needed...',
-  );
+  while (settledPolls < 2) {
+    throwForCloudflareState(inspection);
 
-  while (await isCloudflareChallenge(page)) {
+    if (inspection.state === 'clear') {
+      settledPolls++;
+    } else {
+      settledPolls = 0;
+
+      if (inspection.state !== previousState) {
+        updateDashboard({ phase: cloudflarePhase(inspection.state) });
+        outputLog(cloudflareLog(inspection.state));
+        previousState = inspection.state;
+      }
+    }
+
     if (Date.now() - startedAt >= CLOUDFLARE_MAX_WAIT_MS) {
       throw Object.assign(
         new Error(
-          `Cloudflare verification did not finish within ${CLOUDFLARE_MAX_WAIT_MS} ms.`,
+          `Cloudflare verification (${inspection.state}) did not finish within ${CLOUDFLARE_MAX_WAIT_MS} ms.`,
         ),
-        { code: 'CLOUDFLARE_TIMEOUT' },
+        {
+          code: 'CLOUDFLARE_TIMEOUT',
+          cloudflareState: inspection.state,
+          url: inspection.url,
+        },
       );
     }
 
-    await page.waitForTimeout(CLOUDFLARE_POLL_MS);
+    if (settledPolls < 2) {
+      await page.waitForTimeout(CLOUDFLARE_POLL_MS);
+      inspection = await inspectCloudflare(page);
+    }
   }
 
+  await page.waitForLoadState('domcontentloaded').catch(() => {});
+
   outputLog('  Cloudflare verification finished.');
+  return true;
 }
 
 async function isDorasutaRateLimitPage(page) {
@@ -192,29 +306,12 @@ async function isDorasutaRateLimitPage(page) {
 }
 
 async function isDorasutaIpBlockedPage(page) {
-  try {
-    return await page.evaluate(() => {
-      const title = document.title ?? '';
-      const body = document.body?.innerText ?? '';
-      const text = `${title}\n${body}`;
-
-      return /error\s*1006/i.test(text) && /banned your IP address/i.test(text);
-    });
-  } catch {
-    return false;
-  }
+  return (await inspectCloudflare(page)).state === 'ip-blocked';
 }
 
 async function throwIfDorasutaIpBlocked(page) {
   if (await isDorasutaIpBlockedPage(page)) {
-    const error = Object.assign(
-      new Error(
-        'Dorasuta blocked this IP address with Cloudflare error 1006. Stopping without retries.',
-      ),
-      { code: 'DORASUTA_IP_BLOCKED' },
-    );
-
-    throw error;
+    throw createDorasutaIpBlockedError();
   }
 }
 
