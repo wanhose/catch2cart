@@ -242,12 +242,15 @@ export async function addTorecaToCart(
   quantity: number,
   variantId: string,
 ) {
-  const stateASwatch = page.locator(
-    'li.swatch-view-item[orig-value="【状態A】"]:not(.swatch-item-unavailable):not([aria-disabled="true"])',
-  );
+  const stateASwatch = page
+    .locator(
+      'li.swatch-view-item[orig-value="【状態A】"]:not(.swatch-item-unavailable):not([aria-disabled="true"])',
+    )
+    .filter({ visible: true })
+    .first();
 
   if (await stateASwatch.count()) {
-    await stateASwatch.first().click();
+    await stateASwatch.click({ force: true });
   }
 
   const variantSelect = page.locator('select[name="id"]').first();
@@ -273,7 +276,7 @@ export async function addTorecaToCart(
     );
     if (!(await stateA.count()))
       throw new Error('Toreca state A selector not found.');
-    await stateA.click();
+    await stateA.filter({ visible: true }).first().click({ force: true });
   }
 
   const quantityInput = page
