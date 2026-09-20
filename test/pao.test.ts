@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   dedupePaoCartEntries,
+  getPaoCartProductName,
+  parsePaoCartEntries,
   parsePaoCartRows,
   parsePaoPrice,
   parsePaoProductTitle,
@@ -49,5 +51,35 @@ test('reads PAO cart line identities and quantities', () => {
     {
       '000000150173': { quantity: 2, price: 560 },
     },
+  );
+});
+
+test('reads PAO legacy cart product links and card numbers', () => {
+  assert.deepEqual(
+    parsePaoCartEntries([
+      {
+        id: '711166',
+        quantity: '1',
+        productName: 'フリーザー(107/103)',
+        url: 'https://pao-onlineshop.com/pokemon-card/product?pid=711166',
+        price: '570円(税込)',
+      },
+    ]),
+    [
+      {
+        productId: '711166',
+        url: 'https://pao-onlineshop.com/pokemon-card/product?pid=711166',
+        productName: 'フリーザー(107/103)',
+        quantity: 1,
+        price: 570,
+      },
+    ],
+  );
+});
+
+test('keeps the cart identity when the product link has no text', () => {
+  assert.equal(
+    getPaoCartProductName('', 'フリーザー(107/103)'),
+    'フリーザー(107/103)',
   );
 });

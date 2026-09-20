@@ -141,33 +141,15 @@ export function dedupePaoCartEntries(entries: ProviderCartEntry[]) {
   return [...uniqueEntries.values()];
 }
 
-export async function readPaoCartEntries(page: Page) {
-  await gotoAndWait(page, PAO_CART_URL, {
-    waitUntil: 'domcontentloaded',
-    timeout: NAVIGATION_TIMEOUT_MS,
-  });
-  const rows = await page
-    .locator('[data-id^="makeshop-common-cart-quantity:"]')
-    .evaluateAll((inputs) =>
-      inputs.map((input) => {
-        const container =
-          input.closest('tr') ??
-          input.closest('.cart-item, .cart_list_item, .item-cart') ??
-          input.parentElement;
-        const link = container?.querySelector(
-          'a[href*="/view/item/"]',
-        ) as HTMLAnchorElement | null;
-
-        return {
-          id: input.getAttribute('data-id') ?? '',
-          quantity: (input as HTMLInputElement | HTMLSelectElement).value,
-          productName: link?.textContent ?? '',
-          url: link?.href ?? null,
-          price:
-            container?.querySelector('.item-cart-price')?.textContent ?? '',
-        };
-      }),
-    );
+export function parsePaoCartEntries(
+  rows: Array<{
+    id: string;
+    quantity: string;
+    productName: string;
+    url: string | null;
+    price: string;
+  }>,
+) {
   return dedupePaoCartEntries(
     rows.map((row) => {
       const id = row.id.replace(/^makeshop-common-cart-quantity:/, '');
@@ -180,6 +162,65 @@ export async function readPaoCartEntries(page: Page) {
       };
     }),
   );
+}
+
+export function getPaoCartProductName(
+  linkText: string | null | undefined,
+  imageAlt: string | null | undefined,
+) {
+  return normalizeWhitespace(linkText) || normalizeWhitespace(imageAlt);
+}
+
+export async function readPaoCartEntries(page: Page) {
+  await gotoAndWait(page, PAO_CART_URL, {
+    waitUntil: 'domcontentloaded',
+    timeout: NAVIGATION_TIMEOUT_MS,
+  });
+  const rows = await page
+    .locator(
+      '[data-id^="makeshop-common-cart-quantity:"], .section.list .element input[name="quantity"]',
+    )
+    .evaluateAll((inputs) =>
+      inputs.map((input) => {
+        const container =
+          input.closest('tr') ??
+          input.closest('.cart-item, .cart_list_item, .item-cart') ??
+          input.closest('.element') ??
+          input.parentElement;
+        const link = container?.querySelector(
+          'a[href*="/view/item/"], a[href*="/pokemon-card/product"]',
+        ) as HTMLAnchorElement | null;
+        const title = container?.querySelector('.item-cart-title');
+        const image = container?.querySelector('img[alt]');
+        const href = link?.href ?? null;
+        const productId =
+          input.getAttribute('data-id') ??
+          href?.match(/[?&]pid=(\d+)/)?.[1] ??
+          href?.match(/\/view\/item\/(\d+)/)?.[1] ??
+          '';
+        const productName = (
+          title?.textContent ||
+          link?.textContent ||
+          image?.getAttribute('alt') ||
+          ''
+        )
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        return {
+          id: productId,
+          quantity: (input as HTMLInputElement | HTMLSelectElement).value,
+          productName,
+          url: href,
+          price:
+            container?.querySelector('.item-cart-price')?.textContent ??
+            [...(container?.querySelectorAll('li') ?? [])].at(-1)
+              ?.textContent ??
+            '',
+        };
+      }),
+    );
+  return parsePaoCartEntries(rows);
 }
 
 /** Add a verified quantity from the current PAO product page to the cart. */
