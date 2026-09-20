@@ -10,8 +10,12 @@ import {
 } from '../src/providers/dorasuta.ts';
 import {
   getCachedProductUrls,
+  getCachedProductOffers,
+  getCachedProductAvailability,
   getCachedProductResolution,
+  getCachedProductUrlsForProvider,
   getProductCacheKey,
+  normalizeProductHostname,
 } from '../src/product-cache.ts';
 
 const card = {
@@ -63,6 +67,81 @@ test('reads current and legacy product cache entries', () => {
     )?.status,
     'NO_NUMBER_MATCH',
   );
+});
+
+test('reads observed provider offers, including sold-out products', () => {
+  const checkedAt = new Date().toISOString();
+
+  assert.deepEqual(
+    getCachedProductOffers(
+      {
+        offers: {
+          'pao-onlineshop.com': [
+            {
+              url: 'https://pao-onlineshop.com/view/item/1',
+              productName: 'ラティオス 070/064',
+              price: 1800,
+              stock: 0,
+              available: false,
+              addable: false,
+              status: 'OBSERVED',
+              checkedAt,
+            },
+          ],
+        },
+      },
+      'pao-onlineshop.com',
+    ),
+    [
+      {
+        url: 'https://pao-onlineshop.com/view/item/1',
+        productName: 'ラティオス 070/064',
+        price: 1800,
+        stock: 0,
+        available: false,
+        addable: false,
+        status: 'OBSERVED',
+        checkedAt,
+      },
+    ],
+  );
+});
+
+test('reads the normalized provider-scoped cache shape without duplicating URLs', () => {
+  const checkedAt = new Date().toISOString();
+  const entry = {
+    providers: {
+      'manasource.net': {
+        selectedUrl: 'https://www.manasource.net/product/197256',
+        offers: [
+          {
+            url: 'https://www.manasource.net/product/197256',
+            productName: 'アローラニャース 115/103',
+            price: 450,
+            stock: 15,
+            available: true,
+            addable: true,
+            status: 'OBSERVED',
+            checkedAt,
+          },
+        ],
+      },
+    },
+  };
+
+  assert.equal(
+    normalizeProductHostname('www.manasource.net'),
+    'manasource.net',
+  );
+  assert.deepEqual(
+    getCachedProductUrlsForProvider(entry, 'www.manasource.net'),
+    ['https://www.manasource.net/product/197256'],
+  );
+  assert.equal(getCachedProductOffers(entry, 'manasource.net')[0]?.price, 450);
+  assert.deepEqual(getCachedProductAvailability(entry, 'www.manasource.net'), {
+    availableQuantity: 15,
+    checkedAt,
+  });
 });
 
 test('requires set and collector number for an exact match', () => {

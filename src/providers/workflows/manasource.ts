@@ -2,7 +2,7 @@ import type { Page } from 'playwright';
 import { COMMIT, MAX_PRICE_YEN } from '../../config.ts';
 import { buildJapaneseSearchName, numbersEqual } from '../../cards.ts';
 import {
-  buildProviderSearchName,
+  buildProviderSearchQueries,
   findMatchingCartEntry,
   matchProviderProduct,
   type ProviderCartEntry,
@@ -11,6 +11,7 @@ import { inspectAllCandidates } from '../candidates.ts';
 import {
   cacheProduct,
   cacheProductAvailability,
+  cacheProductOffers,
   cacheProductResolution,
   getCachedProductAvailability,
   getCachedProductEntry,
@@ -74,18 +75,24 @@ export async function processManaSourceCard(
     }) => void;
     // eslint-disable-next-line no-unused-vars
     onProgress?: (phase: string) => void;
+    // eslint-disable-next-line no-unused-vars
+    onCandidateProgress?: (checked: number, total: number) => void;
+    // eslint-disable-next-line no-unused-vars
+    onCandidatesReady?: (total: number) => void | Promise<void>;
   } = {},
 ): Promise<ManaSourceCardResult> {
   const commit = options.commit ?? COMMIT;
   const cartEntry = findMatchingCartEntry(card, options.cartEntries ?? []);
 
   if (cartEntry && cartEntry.quantity >= card.quantity) {
+    await options.onCandidatesReady?.(0);
     return { status: 'ALREADY_IN_CART', productId: cartEntry.productId };
   }
 
   const japanese = buildJapaneseSearchName(card.cardmarketName);
 
   if (!japanese.searchName) {
+    await options.onCandidatesReady?.(0);
     return { status: 'NAME_NOT_RESOLVED' };
   }
 
@@ -99,8 +106,10 @@ export async function processManaSourceCard(
     ? null
     : getCachedProductResolution(cacheEntry, 'www.manasource.net');
   let product = null;
+  let candidatesWereInspected = false;
 
   if (cachedResolution) {
+    await options.onCandidatesReady?.(0);
     return { status: cachedResolution.status };
   }
 
@@ -144,22 +153,41 @@ export async function processManaSourceCard(
     }
   }
 
-  const searchName = buildProviderSearchName(
+  const searchQueries = buildProviderSearchQueries(
     cachedSearchName ?? japanese.searchName,
     card,
   );
+  if (!searchQueries.length) {
+    await options.onCandidatesReady?.(0);
+    await cacheProductResolution(
+      card,
+      'www.manasource.net',
+      'SET_METADATA_NOT_FOUND',
+      cachedSearchName ?? japanese.searchName,
+    );
+    return { status: 'SET_METADATA_NOT_FOUND' };
+  }
+  let searchName = searchQueries[0];
 
   if (!product) {
-    const candidates = await searchManaSource(page, searchName, {
-      sortByPrice: true,
-    });
-    const numberedCandidates = candidates.filter(
-      (candidate) =>
-        candidate.collectorNumber !== null &&
-        numbersEqual(candidate.collectorNumber, card.number),
-    );
+    let numberedCandidates = [];
+
+    for (const query of searchQueries) {
+      searchName = query;
+      const candidates = await searchManaSource(page, query, {
+        sortByPrice: true,
+      });
+      numberedCandidates = candidates.filter(
+        (candidate) =>
+          candidate.collectorNumber !== null &&
+          numbersEqual(candidate.collectorNumber, card.number),
+      );
+
+      if (numberedCandidates.length) break;
+    }
 
     if (!numberedCandidates.length) {
+      await options.onCandidatesReady?.(0);
       await cacheProductResolution(
         card,
         'www.manasource.net',
@@ -169,15 +197,12 @@ export async function processManaSourceCard(
       return { status: 'NO_NUMBER_MATCH' };
     }
 
+    await options.onCandidatesReady?.(numberedCandidates.length);
+    candidatesWereInspected = true;
     const inspectedCandidates = await inspectAllCandidates(
       numberedCandidates,
       async (candidate: { url: string }, candidateIndex, candidateTotal) => {
-        options.onProgress?.(
-          'ManaSource: Checking candidate ' +
-            (candidateIndex + 1) +
-            '/' +
-            candidateTotal,
-        );
+        options.onCandidateProgress?.(candidateIndex + 1, candidateTotal);
         return inspectManaSourceProduct(page, candidate.url);
       },
     );
@@ -201,6 +226,18 @@ export async function processManaSourceCard(
       );
       return { status: 'SET_NOT_VERIFIED' };
     }
+
+    await cacheProductOffers(
+      card,
+      'www.manasource.net',
+      verifiedCandidates.map(({ product: candidateProduct }) => ({
+        url: candidateProduct.url,
+        price: candidateProduct.price,
+        stock: candidateProduct.availableQuantity,
+        available:
+          candidateProduct.addable && candidateProduct.availableQuantity > 0,
+      })),
+    );
 
     const availableCandidates = verifiedCandidates.filter(
       ({ product: candidateProduct }) =>
@@ -230,6 +267,18 @@ export async function processManaSourceCard(
     'www.manasource.net',
     product.availableQuantity,
   );
+  await cacheProductOffers(card, 'www.manasource.net', [
+    {
+      url: product.url,
+      price: product.price,
+      stock: product.availableQuantity,
+      available: product.addable && product.availableQuantity > 0,
+    },
+  ]);
+
+  if (product && !candidatesWereInspected) {
+    await options.onCandidatesReady?.(0);
+  }
 
   const productId = product.externalId;
 

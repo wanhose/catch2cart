@@ -13,7 +13,7 @@ import {
 } from '../../output.ts';
 import { inspectAllCandidates } from '../candidates.ts';
 import {
-  buildProviderSearchName,
+  buildProviderSearchQueries,
   findMatchingCartEntry,
   type ProviderCartEntry,
 } from '../matching.ts';
@@ -21,6 +21,7 @@ import type { ProviderOffer } from '../types.ts';
 import {
   cacheProduct,
   cacheProductAvailability,
+  cacheProductOffers,
   cacheProductResolution,
   getCachedProductAvailability,
   getCachedProductEntry,
@@ -55,6 +56,12 @@ export async function processDorasutaCard(
     cartEntries?: ProviderCartEntry[];
     // eslint-disable-next-line no-unused-vars
     onOffer?: (offer: ProviderOffer) => void;
+    // eslint-disable-next-line no-unused-vars
+    onProgress?: (phase: string) => void;
+    // eslint-disable-next-line no-unused-vars
+    onCandidateProgress?: (checked: number, total: number) => void;
+    // eslint-disable-next-line no-unused-vars
+    onCandidatesReady?: (total: number) => void | Promise<void>;
   } = {},
 ) {
   const commit = options.commit ?? COMMIT;
@@ -76,6 +83,7 @@ export async function processDorasutaCard(
 
   const cartEntry = findMatchingCartEntry(card, options.cartEntries ?? []);
   if (cartEntry && cartEntry.quantity >= card.quantity) {
+    await options.onCandidatesReady?.(0);
     return 'ALREADY_IN_CART';
   }
 
@@ -86,6 +94,7 @@ export async function processDorasutaCard(
     : undefined;
 
   let product = null;
+  let candidatesWereInspected = false;
   let searchNameForCache = null;
 
   const cachedUrl =
@@ -95,6 +104,7 @@ export async function processDorasutaCard(
     : getCachedProductResolution(cachedEntry, 'dorasuta.jp');
 
   if (cachedResolution) {
+    await options.onCandidatesReady?.(0);
     outputLog(
       '  SKIP: cached search result is still fresh (' +
         formatDashboardStatus(cachedResolution.status) +
@@ -122,6 +132,7 @@ export async function processDorasutaCard(
       cachedCartQuantity !== undefined &&
       cachedCartQuantity >= card.quantity
     ) {
+      await options.onCandidatesReady?.(0);
       outputLog(
         `  SKIP: already in cart (${cachedCartQuantity}/${card.quantity}); product page check skipped.`,
       );
@@ -130,6 +141,7 @@ export async function processDorasutaCard(
     }
 
     if (cachedProductId && cachedAvailability?.availableQuantity === 0) {
+      await options.onCandidatesReady?.(0);
       outputLog(
         '  SKIP: cached stock says this product is unavailable; ' +
           'product page check skipped.',
@@ -168,6 +180,7 @@ export async function processDorasutaCard(
     const searchName = cachedSearchName ?? japanese.searchName;
 
     if (!searchName) {
+      await options.onCandidatesReady?.(0);
       outputLog(
         `  SKIP: Japanese search name could not be resolved ` +
           `(${japanese.strategy}). Add the product URL manually to ` +
@@ -187,14 +200,35 @@ export async function processDorasutaCard(
       outputLog(`  Local name: ${searchName}`);
     }
 
-    searchNameForCache = buildProviderSearchName(searchName, card);
+    const searchQueries = buildProviderSearchQueries(searchName, card);
+    searchNameForCache = searchQueries[0] ?? null;
+
+    if (!searchQueries.length) {
+      await options.onCandidatesReady?.(0);
+      outputLog(
+        '  SKIP: set total is unavailable; refusing an ambiguous search.',
+      );
+      await cacheProductResolution(
+        card,
+        'dorasuta.jp',
+        'SET_METADATA_NOT_FOUND',
+        searchName,
+      );
+      return 'SET_METADATA_NOT_FOUND';
+    }
+
     outputLog(`  Search: ${searchNameForCache}`);
 
-    updateDashboard({
-      phase: `Searching Dorasuta for ${searchNameForCache}`,
-    });
+    options.onProgress?.('Searching products');
 
-    const candidates = await searchDorasuta(page, searchNameForCache);
+    let candidates = [];
+    let numberedCandidates = [];
+    for (const query of searchQueries) {
+      searchNameForCache = query;
+      candidates = await searchDorasuta(page, query);
+      numberedCandidates = filterCandidatesByNumber(candidates, card.number);
+      if (numberedCandidates.length) break;
+    }
 
     outputLog(`  Results: ${candidates.length}`);
 
@@ -202,16 +236,12 @@ export async function processDorasutaCard(
       phase: `Checking ${candidates.length} search result(s)`,
     });
 
-    const numberedCandidates = filterCandidatesByNumber(
-      candidates,
-      card.number,
-    );
-
     outputLog(
       `  Number ${card.number}: ` + `${numberedCandidates.length} candidate(s)`,
     );
 
     if (!numberedCandidates.length) {
+      await options.onCandidatesReady?.(0);
       outputLog('  SKIP: collector number not found in search results.');
       await cacheProductResolution(
         card,
@@ -223,16 +253,12 @@ export async function processDorasutaCard(
       return 'NO_NUMBER_MATCH';
     }
 
+    await options.onCandidatesReady?.(numberedCandidates.length);
+    candidatesWereInspected = true;
     const inspectedCandidates = await inspectAllCandidates(
       numberedCandidates,
       async (candidate: { href: string }, candidateIndex, candidateTotal) => {
-        updateDashboard({
-          phase:
-            'Dorasuta: Checking candidate ' +
-            (candidateIndex + 1) +
-            '/' +
-            candidateTotal,
-        });
+        options.onCandidateProgress?.(candidateIndex + 1, candidateTotal);
         outputLog(
           '  Checking Dorasuta candidate ' +
             (candidateIndex + 1) +
@@ -329,6 +355,10 @@ export async function processDorasutaCard(
     await cacheProduct(card, product, searchNameForCache);
   }
 
+  if (product && !candidatesWereInspected) {
+    await options.onCandidatesReady?.(0);
+  }
+
   const productId = getDorasutaProductId(product.url);
 
   if (!productId) {
@@ -372,6 +402,16 @@ export async function processDorasutaCard(
   });
 
   const conditions = await findConditionOptions(page);
+  await cacheProductOffers(
+    card,
+    'dorasuta.jp',
+    conditions.map((option) => ({
+      url: product.url,
+      price: option.price,
+      stock: option.stock,
+      available: option.canAdd && (option.stock ?? 0) > 0,
+    })),
+  );
   const verifiedStock = conditions.reduce((maximum, item) => {
     if (!item.canAdd || !Number.isInteger(item.stock) || item.stock <= 0) {
       return maximum;

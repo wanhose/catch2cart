@@ -148,7 +148,9 @@ export const SKIP_CARDMARKET_WISHLIST_IDS = new Set(skippedCardmarketWishlists);
 export const USE_WISHLIST_CACHE =
   process.argv.includes('--use-wishlist-cache') ||
   process.argv.includes('--use-cardmarket-cache') ||
-  process.argv.includes('--cardmarket-cache');
+  process.argv.includes('--cardmarket-cache') ||
+  process.argv.includes('--clear-wishlist-cache') ||
+  process.argv.includes('--clear-cardmarket-cache');
 
 export const CLEAR_WISHLIST_CACHE =
   process.argv.includes('--clear-wishlist-cache') ||
@@ -157,6 +159,9 @@ export const CLEAR_WISHLIST_CACHE =
 export const VERBOSE_OUTPUT = process.argv.includes('--verbose');
 
 export const NO_DASHBOARD = process.argv.includes('--no-dashboard');
+
+export const REPORT_ENABLED =
+  process.argv.includes('--report') || process.argv.includes('--cost-report');
 
 export const DASHBOARD_ENABLED =
   Boolean(process.stdout.isTTY) && !VERBOSE_OUTPUT && !NO_DASHBOARD;
@@ -216,7 +221,11 @@ export const USE_PRODUCT_CACHE =
   process.argv.includes('--use-product-cache') ||
   process.argv.includes('--use-dorasuta-cache') ||
   process.argv.includes('--use-dorasuta-product-cache') ||
-  process.argv.includes('--dorasuta-product-cache');
+  process.argv.includes('--dorasuta-product-cache') ||
+  process.argv.includes('--clear-product-cache') ||
+  process.argv.includes('--clear-dorasuta-cache') ||
+  process.argv.includes('--clear-dorasuta-product-cache') ||
+  REPORT_ENABLED;
 
 export const CLEAR_PRODUCT_CACHE =
   process.argv.includes('--clear-product-cache') ||

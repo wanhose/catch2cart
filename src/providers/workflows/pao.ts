@@ -5,6 +5,7 @@ import { gotoAndWait } from '../../browser.ts';
 import {
   cacheProduct,
   cacheProductAvailability,
+  cacheProductOffers,
   cacheProductResolution,
   getCachedProductAvailability,
   getCachedProductEntry,
@@ -16,7 +17,7 @@ import {
 import { inspectAllCandidates } from '../candidates.ts';
 import { addPaoToCart, inspectPaoProduct, searchPao } from '../pao.ts';
 import {
-  buildProviderSearchName,
+  buildProviderSearchQueries,
   findMatchingCartEntry,
   matchProviderProduct,
   type ProviderCartEntry,
@@ -72,12 +73,17 @@ export async function processPaoCard(
     }) => void;
     // eslint-disable-next-line no-unused-vars
     onProgress?: (phase: string) => void;
+    // eslint-disable-next-line no-unused-vars
+    onCandidateProgress?: (checked: number, total: number) => void;
+    // eslint-disable-next-line no-unused-vars
+    onCandidatesReady?: (total: number) => void | Promise<void>;
   } = {},
 ): Promise<PaoCardResult> {
   const commit = options.commit ?? COMMIT;
   const cartEntry = findMatchingCartEntry(card, options.cartEntries ?? []);
 
   if (cartEntry && cartEntry.quantity >= card.quantity) {
+    await options.onCandidatesReady?.(0);
     return { status: 'ALREADY_IN_CART', productId: cartEntry.productId };
   }
 
@@ -90,9 +96,13 @@ export async function processPaoCard(
     ? null
     : getCachedProductResolution(cacheEntry, PAO_HOSTNAME);
 
-  if (cachedResolution) return { status: cachedResolution.status };
+  if (cachedResolution) {
+    await options.onCandidatesReady?.(0);
+    return { status: cachedResolution.status };
+  }
 
   let product = null;
+  let candidatesWereInspected = false;
 
   if (cachedUrl) {
     const cachedProduct = await inspectPaoProduct(page, cachedUrl);
@@ -104,18 +114,38 @@ export async function processPaoCard(
   const searchName = cachedSearchName ?? japanese.searchName;
 
   if (!product && !searchName) {
+    await options.onCandidatesReady?.(0);
     return { status: 'NAME_NOT_RESOLVED' };
   }
 
   if (!product) {
-    const query = buildProviderSearchName(searchName, card);
+    const queries = buildProviderSearchQueries(searchName, card);
+    if (!queries.length) {
+      await options.onCandidatesReady?.(0);
+      await cacheProductResolution(
+        card,
+        PAO_HOSTNAME,
+        'SET_METADATA_NOT_FOUND',
+        searchName,
+      );
+      return { status: 'SET_METADATA_NOT_FOUND' };
+    }
+    let query = queries[0];
     options.onProgress?.('PAO: Searching products');
-    const candidates = await searchPao(page, query);
-    const numberedCandidates = candidates.filter((candidate) =>
-      numbersEqual(candidate.collectorNumber, card.number),
-    );
+    let numberedCandidates = [];
+
+    for (const candidateQuery of queries) {
+      query = candidateQuery;
+      const candidates = await searchPao(page, candidateQuery);
+      numberedCandidates = candidates.filter((candidate) =>
+        numbersEqual(candidate.collectorNumber, card.number),
+      );
+
+      if (numberedCandidates.length) break;
+    }
 
     if (!numberedCandidates.length) {
+      await options.onCandidatesReady?.(0);
       await cacheProductResolution(
         card,
         PAO_HOSTNAME,
@@ -125,10 +155,12 @@ export async function processPaoCard(
       return { status: 'NO_NUMBER_MATCH' };
     }
 
+    await options.onCandidatesReady?.(numberedCandidates.length);
+    candidatesWereInspected = true;
     const inspected = await inspectAllCandidates(
       numberedCandidates,
       async (candidate, index, total) => {
-        options.onProgress?.(`PAO: Checking candidate ${index + 1}/${total}`);
+        options.onCandidateProgress?.(index + 1, total);
         return inspectPaoProduct(page, candidate.url);
       },
     );
@@ -140,6 +172,18 @@ export async function processPaoCard(
       await cacheProductResolution(card, PAO_HOSTNAME, 'NO_EXACT_MATCH', query);
       return { status: 'NO_EXACT_MATCH' };
     }
+
+    await cacheProductOffers(
+      card,
+      PAO_HOSTNAME,
+      matches.map((candidateProduct) => ({
+        url: candidateProduct.url,
+        price: candidateProduct.price,
+        stock: candidateProduct.stock,
+        available:
+          candidateProduct.addable && (candidateProduct.stock ?? 0) > 0,
+      })),
+    );
 
     const availableMatches = matches.filter(
       (candidateProduct) =>
@@ -157,6 +201,10 @@ export async function processPaoCard(
       return a.price - b.price;
     })[0];
     await cacheProduct(card, product, query);
+  }
+
+  if (product && !candidatesWereInspected) {
+    await options.onCandidatesReady?.(0);
   }
 
   const productId = product.externalId;
@@ -177,6 +225,14 @@ export async function processPaoCard(
 
   await gotoAndWait(page, product.url, { waitUntil: 'domcontentloaded' });
   const stock = product.stock ?? 0;
+  await cacheProductOffers(card, PAO_HOSTNAME, [
+    {
+      url: product.url,
+      price: product.price,
+      stock: product.stock,
+      available: product.addable && stock > 0,
+    },
+  ]);
   await cacheProductAvailability(card, PAO_HOSTNAME, stock);
 
   if (!product.addable || stock <= 0) {

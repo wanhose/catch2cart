@@ -12,18 +12,34 @@ export interface WishlistCardIdentity {
 }
 
 /** Build the provider search suffix used by Japanese card listings. */
-export function buildProviderSearchName(
+export function formatProviderNumberTotal(number: string, total: number) {
+  const numberText = String(number).padStart(3, '0');
+  const totalText = String(total).padStart(3, '0');
+
+  return `${numberText}/${totalText}`;
+}
+
+export function buildProviderSearchQueries(
   searchName: string,
   card: WishlistCardIdentity,
 ) {
   const number = String(card.number);
-  const suffix = getPokemonSetTotal(card.set)
-    ? `${number}/${getPokemonSetTotal(card.set)}`
-    : number;
-  const trailingNumber = new RegExp(`(?:\\s+${number})+(?:\\s*/\\s*\\d+)?$`);
+  const total = getPokemonSetTotal(card.set);
+  if (!total || !/^\d+$/.test(number)) return [];
+
+  const formattedNumberTotal = formatProviderNumberTotal(number, total);
+  const unpaddedNumber = number.replace(/^0+/, '') || '0';
+  const trailingNumber = new RegExp(
+    `(?:\\s+0*${unpaddedNumber})+(?:\\s*/\\s*0*\\d+)?$`,
+  );
   const baseName = normalizeWhitespace(searchName).replace(trailingNumber, '');
 
-  return [baseName, suffix].filter(Boolean).join(' ');
+  return [
+    [baseName, formattedNumberTotal].join(' '),
+    formattedNumberTotal,
+  ].filter(
+    (query, index, queries) => query && queries.indexOf(query) === index,
+  );
 }
 
 export interface ProviderProductIdentity {

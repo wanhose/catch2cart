@@ -19,15 +19,32 @@ export interface ProductResolution {
   checkedAt: string;
 }
 
+export interface ProductOfferSnapshot {
+  url: string | null;
+  price: number | null;
+  stock: number | null;
+  available: boolean;
+  checkedAt: string;
+}
+
+export interface ProductProviderCache {
+  selectedUrl?: string;
+  resolution?: ProductResolution;
+  offers: ProductOfferSnapshot[];
+}
+
 export interface ProductCacheEntry {
-  urls: string[];
-  source?: string;
   searchName?: string;
+  providers?: Record<string, ProductProviderCache>;
+  /** @deprecated Read-only compatibility fields for pre-normalized callers. */
+  urls?: string[];
   availability?: Record<string, ProductAvailability>;
   resolution?: Record<string, ProductResolution>;
+  offers?: Record<string, ProductOfferSnapshot[]>;
 }
 
 let productCache = new Map<string, ProductCacheEntry>();
+let productCacheWriteQueue = Promise.resolve();
 
 /** Build the provider-neutral key shared by every product adapter. */
 export function getProductCacheKey(card: {
@@ -54,9 +71,41 @@ export function normalizeCachedProductUrl(value: unknown) {
   return /^https?:\/\//.test(url) ? url : null;
 }
 
+/** Use one cache key for hosts with and without a leading `www.`. */
+export function normalizeProductHostname(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^www\./, '')
+    .replace(/\.$/, '');
+}
+
+function getHostname(url: string) {
+  try {
+    return normalizeProductHostname(new URL(url).hostname);
+  } catch {
+    return null;
+  }
+}
+
+function getProviderCache(entry: unknown, hostname: string) {
+  if (!entry || typeof entry !== 'object') return null;
+
+  const providers = (entry as { providers?: unknown }).providers;
+  if (!providers || typeof providers !== 'object') return null;
+
+  const provider = (providers as Record<string, unknown>)[
+    normalizeProductHostname(hostname)
+  ];
+
+  return provider && typeof provider === 'object'
+    ? (provider as ProductProviderCache)
+    : null;
+}
+
 /** Read current multi-URL entries and legacy single-URL entries. */
 export function getCachedProductUrls(entry: unknown) {
-  const values =
+  const legacyValues =
     typeof entry === 'string'
       ? [entry]
       : entry && typeof entry === 'object'
@@ -68,9 +117,32 @@ export function getCachedProductUrls(entry: unknown) {
           ]
         : [];
 
+  const providerValues: unknown[] = [];
+  if (entry && typeof entry === 'object') {
+    const providers = (entry as { providers?: unknown }).providers;
+    if (providers && typeof providers === 'object') {
+      for (const provider of Object.values(
+        providers as Record<string, unknown>,
+      )) {
+        if (!provider || typeof provider !== 'object') continue;
+        const record = provider as Record<string, unknown>;
+        providerValues.push(record.selectedUrl);
+        if (Array.isArray(record.offers)) {
+          providerValues.push(
+            ...record.offers.flatMap((offer) =>
+              offer && typeof offer === 'object'
+                ? [(offer as Record<string, unknown>).url]
+                : [],
+            ),
+          );
+        }
+      }
+    }
+  }
+
   return [
     ...new Set(
-      values
+      [...providerValues, ...legacyValues]
         .map((value) => normalizeCachedProductUrl(value))
         .filter((url): url is string => Boolean(url)),
     ),
@@ -87,12 +159,10 @@ export function getCachedProductUrlsForProvider(
   entry: unknown,
   hostname: string,
 ) {
+  const normalizedHostname = normalizeProductHostname(hostname);
+
   return getCachedProductUrls(entry).filter((url) => {
-    try {
-      return new URL(url).hostname === hostname;
-    } catch {
-      return false;
-    }
+    return getHostname(url) === normalizedHostname;
   });
 }
 
@@ -121,10 +191,34 @@ export function getCachedProductAvailability(
     return null;
   }
 
+  const provider = getProviderCache(entry, hostname);
+  const selectedUrl = provider?.selectedUrl;
+  const offer = provider?.offers.find(
+    (item) => !selectedUrl || item.url === selectedUrl,
+  );
+
+  if (offer && typeof offer.stock === 'number') {
+    const timestamp = Date.parse(offer.checkedAt);
+
+    if (
+      Number.isInteger(offer.stock) &&
+      offer.stock >= 0 &&
+      Number.isFinite(timestamp) &&
+      (PRODUCT_CACHE_TTL_HOURS === 0 ||
+        Date.now() - timestamp <= PRODUCT_CACHE_TTL_HOURS * 60 * 60 * 1000)
+    ) {
+      return { availableQuantity: offer.stock, checkedAt: offer.checkedAt };
+    }
+  }
+
+  // Read the old shape while an entry is being migrated in memory.
   const availability = (entry as { availability?: unknown }).availability;
   const value =
     availability && typeof availability === 'object'
-      ? (availability as Record<string, unknown>)[hostname]
+      ? ((availability as Record<string, unknown>)[hostname] ??
+        (availability as Record<string, unknown>)[
+          normalizeProductHostname(hostname)
+        ])
       : null;
 
   if (!value || typeof value !== 'object') {
@@ -156,11 +250,102 @@ export function getCachedProductAvailability(
   return { availableQuantity, checkedAt };
 }
 
+/** Return the observed offers for one provider, including sold-out products. */
+export function getCachedProductOffers(
+  entry: unknown,
+  hostname: string,
+): ProductOfferSnapshot[] {
+  const provider = getProviderCache(entry, hostname);
+  if (provider) return provider.offers.filter(isProductOfferSnapshot);
+
+  if (!entry || typeof entry !== 'object') return [];
+  const offers = (entry as { offers?: unknown }).offers;
+  const value =
+    offers && typeof offers === 'object'
+      ? (offers as Record<string, unknown>)[hostname]
+      : null;
+
+  return Array.isArray(value) ? value.filter(isProductOfferSnapshot) : [];
+}
+
+function isProductOfferSnapshot(value: unknown): value is ProductOfferSnapshot {
+  if (!value || typeof value !== 'object') return false;
+  const offer = value as ProductOfferSnapshot;
+  return (
+    (offer.url === null || typeof offer.url === 'string') &&
+    (offer.price === null ||
+      (typeof offer.price === 'number' && Number.isFinite(offer.price))) &&
+    (offer.stock === null ||
+      (typeof offer.stock === 'number' && Number.isFinite(offer.stock))) &&
+    typeof offer.available === 'boolean' &&
+    typeof offer.checkedAt === 'string'
+  );
+}
+
+/** Store observed provider offers without changing matching or cart logic. */
+export async function cacheProductOffers(
+  card: { set: string; number: string; cardmarketName: string },
+  hostname: string,
+  offers: Array<
+    Omit<ProductOfferSnapshot, 'checkedAt'> & { checkedAt?: string }
+  >,
+) {
+  if (!USE_PRODUCT_CACHE || !offers.length) return;
+
+  const key = getProductCacheKey(card);
+  const previous = productCache.get(key);
+  const provider = normalizeProductHostname(hostname);
+  const byIdentity = new Map(
+    getCachedProductOffers(previous, hostname).map((offer) => [
+      `${offer.url ?? ''}:${offer.price ?? ''}:${offer.stock ?? ''}`,
+      offer,
+    ]),
+  );
+
+  for (const offer of offers) {
+    const snapshot = {
+      ...offer,
+      checkedAt: offer.checkedAt ?? new Date().toISOString(),
+    };
+    byIdentity.set(
+      `${snapshot.url ?? ''}:${snapshot.price ?? ''}:${snapshot.stock ?? ''}`,
+      snapshot,
+    );
+  }
+
+  const providers = { ...(previous?.providers ?? {}) };
+  providers[provider] = {
+    ...(providers[provider] ?? {}),
+    offers: [...byIdentity.values()],
+  };
+
+  productCache.set(key, {
+    searchName: previous?.searchName,
+    providers,
+  });
+
+  await saveProductCache();
+}
+
 /** Return a provider's fresh negative search result, if one was cached. */
 export function getCachedProductResolution(
   entry: unknown,
   hostname: string,
 ): ProductResolution | null {
+  const provider = getProviderCache(entry, hostname);
+  if (provider?.resolution) {
+    const timestamp = Date.parse(provider.resolution.checkedAt);
+
+    if (
+      provider.resolution.status &&
+      Number.isFinite(timestamp) &&
+      (PRODUCT_CACHE_TTL_HOURS === 0 ||
+        Date.now() - timestamp <= PRODUCT_CACHE_TTL_HOURS * 60 * 60 * 1000)
+    ) {
+      return provider.resolution;
+    }
+  }
+
   if (!entry || typeof entry !== 'object') {
     return null;
   }
@@ -211,19 +396,21 @@ export async function cacheProductResolution(
 
   const key = getProductCacheKey(card);
   const previous = productCache.get(key);
-  const resolution = { ...(previous?.resolution ?? {}) };
+  const provider = normalizeProductHostname(hostname);
+  const providers = { ...(previous?.providers ?? {}) };
 
-  resolution[hostname] = {
-    status,
-    checkedAt: new Date().toISOString(),
+  providers[provider] = {
+    ...(providers[provider] ?? {}),
+    offers: providers[provider]?.offers ?? [],
+    resolution: {
+      status,
+      checkedAt: new Date().toISOString(),
+    },
   };
 
   productCache.set(key, {
-    urls: previous?.urls ?? [],
-    source: previous?.source ?? 'search',
     searchName: searchName ?? previous?.searchName,
-    availability: previous?.availability,
-    resolution,
+    providers,
   });
 
   await saveProductCache();
@@ -241,19 +428,26 @@ export async function cacheProductAvailability(
 
   const key = getProductCacheKey(card);
   const previous = productCache.get(key);
-  const availability = { ...(previous?.availability ?? {}) };
+  const provider = normalizeProductHostname(hostname);
+  const providers = { ...(previous?.providers ?? {}) };
+  const current = providers[provider];
+  const selectedUrl = current?.selectedUrl;
+  const checkedAt = new Date().toISOString();
+  const stock = Math.max(0, Math.floor(availableQuantity));
+  const offers = (current?.offers ?? []).map((offer) =>
+    !selectedUrl || offer.url === selectedUrl
+      ? { ...offer, stock, checkedAt }
+      : offer,
+  );
 
-  availability[hostname] = {
-    availableQuantity: Math.max(0, Math.floor(availableQuantity)),
-    checkedAt: new Date().toISOString(),
+  providers[provider] = {
+    ...(current ?? {}),
+    offers,
   };
 
   productCache.set(key, {
-    urls: previous?.urls ?? [],
-    source: previous?.source ?? 'availability',
     searchName: previous?.searchName,
-    availability,
-    resolution: previous?.resolution,
+    providers,
   });
 
   await saveProductCache();
@@ -277,20 +471,22 @@ export async function cacheProduct(
     return;
   }
 
-  const resolution = { ...(previous?.resolution ?? {}) };
+  const hostname = getHostname(url);
+  if (!hostname) return;
+  const providers = { ...(previous?.providers ?? {}) };
+  const provider = providers[hostname];
 
-  try {
-    delete resolution[new URL(url).hostname];
-  } catch {
-    // URL validation already happened above; retain a stale resolution safely.
-  }
+  const nextProvider = {
+    ...(provider ?? {}),
+    selectedUrl: url,
+    offers: provider?.offers ?? [],
+  };
+  delete nextProvider.resolution;
+  providers[hostname] = nextProvider;
 
   productCache.set(key, {
-    urls: [...new Set([...(previous?.urls ?? []), url])],
-    source: previous?.source ?? 'search',
     searchName: searchName ?? previous?.searchName,
-    availability: previous?.availability,
-    resolution: Object.keys(resolution).length ? resolution : undefined,
+    providers,
   });
 
   await saveProductCache();
@@ -366,6 +562,44 @@ export async function loadProductCache() {
       outputLog(
         `Using product cache: ${cacheFile} ` + `(${productCache.size} entries)`,
       );
+
+      const needsNormalization =
+        cached.version !== 1 ||
+        Object.values(cached.products).some((value) => {
+          if (
+            !value ||
+            typeof value !== 'object' ||
+            !('providers' in (value as Record<string, unknown>))
+          ) {
+            return true;
+          }
+
+          const providers = (value as Record<string, unknown>).providers;
+          if (!providers || typeof providers !== 'object') return true;
+          return Object.values(providers as Record<string, unknown>).some(
+            (provider) => {
+              if (!provider || typeof provider !== 'object') return true;
+              const offers = (provider as Record<string, unknown>).offers;
+              return (
+                Array.isArray(offers) &&
+                offers.some(
+                  (offer) =>
+                    offer &&
+                    typeof offer === 'object' &&
+                    ('productName' in offer ||
+                      'addable' in offer ||
+                      'status' in offer),
+                )
+              );
+            },
+          );
+        });
+
+      if (needsNormalization) {
+        outputLog('Normalizing legacy product cache entries...');
+        await saveProductCache();
+      }
+
       return;
     }
 
@@ -441,20 +675,155 @@ function normalizeProductResolution(value: unknown) {
   return Object.keys(result).length ? result : undefined;
 }
 
+function normalizeProductOffers(value: unknown) {
+  if (!value || typeof value !== 'object') return undefined;
+
+  const result: Record<string, ProductOfferSnapshot[]> = {};
+
+  for (const [hostname, items] of Object.entries(value)) {
+    if (!Array.isArray(items)) continue;
+    const validItems = items
+      .map(normalizeProductOffer)
+      .filter((offer): offer is ProductOfferSnapshot => Boolean(offer));
+    if (validItems.length) result[hostname] = validItems;
+  }
+
+  return Object.keys(result).length ? result : undefined;
+}
+
+function normalizeProductOffer(value: unknown): ProductOfferSnapshot | null {
+  if (!value || typeof value !== 'object') return null;
+
+  const record = value as Record<string, unknown>;
+  const url =
+    record.url === null ? null : normalizeCachedProductUrl(record.url);
+  const price: number | null =
+    record.price === null ||
+    (typeof record.price === 'number' && Number.isFinite(record.price))
+      ? (record.price as number | null)
+      : null;
+  const stock: number | null =
+    record.stock === null ||
+    (typeof record.stock === 'number' &&
+      Number.isInteger(record.stock) &&
+      record.stock >= 0)
+      ? (record.stock as number | null)
+      : null;
+  const checkedAt =
+    typeof record.checkedAt === 'string' ? record.checkedAt : null;
+
+  if (typeof record.available !== 'boolean' || !checkedAt) return null;
+
+  return { url, price, stock, available: record.available, checkedAt };
+}
+
+function normalizeProductProvider(value: unknown): ProductProviderCache {
+  const object =
+    value && typeof value === 'object'
+      ? (value as Record<string, unknown>)
+      : {};
+  const selectedUrl = normalizeCachedProductUrl(object.selectedUrl);
+  const offers = Array.isArray(object.offers)
+    ? object.offers
+        .map(normalizeProductOffer)
+        .filter((offer): offer is ProductOfferSnapshot => Boolean(offer))
+    : [];
+  const resolution =
+    object.resolution && typeof object.resolution === 'object'
+      ? normalizeProductResolution({ provider: object.resolution })?.provider
+      : undefined;
+
+  return {
+    selectedUrl: selectedUrl ?? undefined,
+    offers,
+    resolution,
+  };
+}
+
 function normalizeProductCacheEntry(value: unknown): ProductCacheEntry {
   const object =
     value && typeof value === 'object'
       ? (value as Record<string, unknown>)
       : {};
-  const urls = getCachedProductUrls(object);
+  const providers: Record<string, ProductProviderCache> = {};
+
+  const ensureProvider = (hostname: string) => {
+    const provider = normalizeProductHostname(hostname);
+    providers[provider] ??= { offers: [] };
+    return providers[provider];
+  };
+
+  if (object.providers && typeof object.providers === 'object') {
+    for (const [hostname, value] of Object.entries(
+      object.providers as Record<string, unknown>,
+    )) {
+      providers[normalizeProductHostname(hostname)] =
+        normalizeProductProvider(value);
+    }
+  }
+
+  // Migrate the old global URL list into the provider that owns each URL.
+  for (const url of getCachedProductUrls(object)) {
+    const hostname = getHostname(url);
+    if (!hostname) continue;
+    const provider = ensureProvider(hostname);
+    provider.selectedUrl ??= url;
+  }
+
+  // Migrate the old provider-keyed offer map into provider records.
+  const legacyOffers = normalizeProductOffers(object.offers);
+  for (const [hostname, offers] of Object.entries(legacyOffers ?? {})) {
+    const provider = ensureProvider(hostname);
+    const byIdentity = new Map(
+      provider.offers.map((offer) => [
+        `${offer.url ?? ''}:${offer.price ?? ''}:${offer.stock ?? ''}`,
+        offer,
+      ]),
+    );
+    for (const offer of offers) {
+      byIdentity.set(
+        `${offer.url ?? ''}:${offer.price ?? ''}:${offer.stock ?? ''}`,
+        offer,
+      );
+      if (offer.url && !provider.selectedUrl) provider.selectedUrl = offer.url;
+    }
+    provider.offers = [...byIdentity.values()];
+  }
+
+  const legacyResolution = normalizeProductResolution(object.resolution);
+  for (const [hostname, resolution] of Object.entries(legacyResolution ?? {})) {
+    ensureProvider(hostname).resolution = resolution;
+  }
+
+  // Availability used to be separate. Fold it into the selected offer so
+  // stock and its timestamp have one authoritative location.
+  const legacyAvailability = normalizeProductAvailability(object.availability);
+  for (const [hostname, availability] of Object.entries(
+    legacyAvailability ?? {},
+  )) {
+    const provider = ensureProvider(hostname);
+    const selected = provider.selectedUrl
+      ? provider.offers.find((offer) => offer.url === provider.selectedUrl)
+      : provider.offers[0];
+
+    if (selected) {
+      selected.stock = availability.availableQuantity;
+      selected.checkedAt = availability.checkedAt;
+    } else if (provider.selectedUrl) {
+      provider.offers.push({
+        url: provider.selectedUrl,
+        price: null,
+        stock: availability.availableQuantity,
+        available: availability.availableQuantity > 0,
+        checkedAt: availability.checkedAt,
+      });
+    }
+  }
 
   return {
-    urls,
-    source: typeof object.source === 'string' ? object.source : 'migration',
     searchName:
       typeof object.searchName === 'string' ? object.searchName : undefined,
-    availability: normalizeProductAvailability(object.availability),
-    resolution: normalizeProductResolution(object.resolution),
+    providers,
   };
 }
 
@@ -462,6 +831,14 @@ async function saveProductCache() {
   if (!USE_PRODUCT_CACHE) {
     return;
   }
+
+  let release: () => void = () => {};
+  const turn = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const previous = productCacheWriteQueue;
+  productCacheWriteQueue = previous.then(() => turn);
+  await previous;
 
   try {
     await writeFile(
@@ -479,5 +856,7 @@ async function saveProductCache() {
     );
   } catch (error) {
     outputLog(`Warning: could not write product cache (${error.message}).`);
+  } finally {
+    release();
   }
 }
