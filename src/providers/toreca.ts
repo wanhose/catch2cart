@@ -255,20 +255,30 @@ export async function addTorecaToCart(
 
   const variantSelect = page.locator('select[name="id"]').first();
   if (!(await stateASwatch.count()) && (await variantSelect.count())) {
-    const exactStateAValue = await variantSelect
+    const availableOptions = await variantSelect
       .locator('option')
       .evaluateAll((options) => {
-        const option = options.find((candidate) => {
-          const text = candidate.textContent?.replace(/\s+/g, ' ').trim() ?? '';
-          return /^【状態A】(?:\s*-|$)/.test(text) && !/【状態A-】/.test(text);
-        });
-        return option?.getAttribute('value') ?? null;
+        return options
+          .filter((candidate) => !candidate.hasAttribute('disabled'))
+          .map((candidate) => ({
+            value: candidate.getAttribute('value') ?? '',
+            text: candidate.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+          }));
       });
+    const exactStateAValue = availableOptions.find(
+      (option) =>
+        /^【状態A】(?:\s*-|$)/.test(option.text) &&
+        !/【状態A-】/.test(option.text),
+    )?.value;
+    const selectedValue = await variantSelect.inputValue();
+    const targetValue =
+      exactStateAValue ||
+      availableOptions.find((option) => option.value === variantId)?.value;
 
-    if (exactStateAValue) {
-      await variantSelect.selectOption(exactStateAValue);
-    } else {
-      await variantSelect.selectOption(variantId);
+    if (targetValue && selectedValue !== targetValue) {
+      await variantSelect.selectOption(targetValue);
+    } else if (!targetValue) {
+      throw new Error('Toreca state A is unavailable.');
     }
   } else if (!(await stateASwatch.count())) {
     const stateA = page.locator(
