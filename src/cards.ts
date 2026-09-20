@@ -303,11 +303,17 @@ function parseCollectorNumber(text) {
   return matches.at(-1)[1];
 }
 
+/** V-UNION products are sold as four-card bundles by the supported shops. */
+function isVUnionCardTitle(title) {
+  return /\bv[\s-]*union\b/i.test(String(title ?? ''));
+}
+
 export {
   buildJapaneseSearchName,
   extractPokemonSpecies,
   extractTcgSuffix,
   getDorasutaProductId,
+  isVUnionCardTitle,
   normalizeNumber,
   normalizeWhitespace,
   numbersEqual,

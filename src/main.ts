@@ -28,7 +28,11 @@ import {
   updateDashboard,
 } from './output.ts';
 import { connectToBrowser, getOrCreatePage } from './browser.ts';
-import { buildJapaneseSearchName, validatePokemonDataset } from './cards.ts';
+import {
+  buildJapaneseSearchName,
+  isVUnionCardTitle,
+  validatePokemonDataset,
+} from './cards.ts';
 import { collectCardmarketCardsWithCache } from './inputs/cardmarket.ts';
 import {
   getCachedProductEntry,
@@ -182,10 +186,25 @@ async function main() {
   const { cards: collectedCards, failures } =
     await collectCardmarketCardsWithCache(cardmarketPage);
 
-  const cards = selectBatch(collectedCards);
+  const skippedVUnionCards = collectedCards.filter((card) =>
+    isVUnionCardTitle(card.cardmarketName),
+  );
+  const supportedCards = collectedCards.filter(
+    (card) => !isVUnionCardTitle(card.cardmarketName),
+  );
+  const cards = selectBatch(supportedCards);
 
   outputLog('');
   outputLog(`Cards collected: ${collectedCards.length}`);
+
+  if (skippedVUnionCards.length) {
+    outputLog(
+      `Skipping unsupported V-UNION cards: ${skippedVUnionCards.length}`,
+    );
+    for (const card of skippedVUnionCards) {
+      outputLog(`  ${card.cardmarketName} (${card.set} ${card.number})`);
+    }
+  }
 
   if (BATCH_SIZE) {
     outputLog(

@@ -5,6 +5,7 @@ import {
   extractPokemonSpecies,
   extractTcgSuffix,
   getDorasutaProductId,
+  isVUnionCardTitle,
   normalizeNumber,
   normalizeWhitespace,
   numbersEqual,
@@ -60,4 +61,12 @@ test('parses the final collector number from alternate-art titles', () => {
   assert.equal(parseCollectorNumber('イーブイ(AR仕様)(755/742)'), '755');
   assert.equal(parseCollectorNumber('ピカチュウex(132/M-P)'), '132');
   assert.equal(parseCollectorNumber('No collector number'), null);
+});
+
+test('identifies unsupported V-UNION wishlist titles', () => {
+  assert.equal(isVUnionCardTitle('Morpeko V-UNION'), true);
+  assert.equal(isVUnionCardTitle('Morpeko V UNION'), true);
+  assert.equal(isVUnionCardTitle('Pikachu V-UNION'), true);
+  assert.equal(isVUnionCardTitle('Pikachu VMAX'), false);
+  assert.equal(isVUnionCardTitle('Union Cave'), false);
 });
