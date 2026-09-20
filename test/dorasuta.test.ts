@@ -122,21 +122,29 @@ test('reads observed provider offers, including sold-out products', () => {
   );
 });
 
-test('reads the normalized provider-scoped cache shape without duplicating URLs', () => {
+test('reads the selected offer without duplicating its URL in provider metadata', () => {
   const checkedAt = new Date().toISOString();
   const entry = {
     providers: {
       'manasource.net': {
-        selectedUrl: 'https://www.manasource.net/product/197256',
         offers: [
           {
             url: 'https://www.manasource.net/product/197256',
+            selected: true,
             productName: 'アローラニャース 115/103',
             price: 450,
             stock: 15,
             available: true,
             addable: true,
             status: 'OBSERVED',
+            checkedAt,
+          },
+          {
+            url: 'https://www.manasource.net/product/999999',
+            selected: false,
+            price: 400,
+            stock: 99,
+            available: true,
             checkedAt,
           },
         ],
@@ -150,13 +158,47 @@ test('reads the normalized provider-scoped cache shape without duplicating URLs'
   );
   assert.deepEqual(
     getCachedProductUrlsForProvider(entry, 'www.manasource.net'),
-    ['https://www.manasource.net/product/197256'],
+    [
+      'https://www.manasource.net/product/197256',
+      'https://www.manasource.net/product/999999',
+    ],
   );
   assert.equal(getCachedProductOffers(entry, 'manasource.net')[0]?.price, 450);
   assert.deepEqual(getCachedProductAvailability(entry, 'www.manasource.net'), {
     availableQuantity: 15,
     checkedAt,
   });
+});
+
+test('reads the legacy selected URL until the product cache is migrated', () => {
+  const entry = {
+    providers: {
+      'dorasuta.jp': {
+        selectedUrl: 'https://dorasuta.jp/pokemon-card/product?pid=2',
+        offers: [
+          {
+            url: 'https://dorasuta.jp/pokemon-card/product?pid=1',
+            price: 100,
+            stock: 1,
+            available: true,
+            checkedAt: new Date().toISOString(),
+          },
+          {
+            url: 'https://dorasuta.jp/pokemon-card/product?pid=2',
+            price: 200,
+            stock: 2,
+            available: true,
+            checkedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    },
+  };
+
+  assert.equal(
+    getCachedProductUrlsForProvider(entry, 'dorasuta.jp')[0],
+    'https://dorasuta.jp/pokemon-card/product?pid=2',
+  );
 });
 
 test('requires set and collector number for an exact match', () => {

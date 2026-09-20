@@ -211,16 +211,16 @@ Cached product availability is invalidated after 24 hours by default. To configu
 Each card contains a generic search term and one normalized record per product provider:
 
     {
-      "version": 1,
+      "version": 2,
       "products": {
         "sv8:115:perrin": {
           "searchName": "フワンテ 111/103",
           "providers": {
             "pao-onlineshop.com": {
-              "selectedUrl": "https://pao-onlineshop.com/view/item/123456",
               "offers": [
                 {
                   "url": "https://pao-onlineshop.com/view/item/123456",
+                  "selected": true,
                   "price": 1800,
                   "stock": 0,
                   "available": false,
@@ -233,7 +233,7 @@ Each card contains a generic search term and one normalized record per product p
       }
     }
 
-Each provider record keeps its selected URL and all observed price, stock and condition variants. Stock and its timestamp live on the offer itself, so URLs and availability are not duplicated at the card level. Hosts are normalized without a leading `www.`. The cache remains at version 1; legacy entries and old cache filenames are normalized automatically within that version.
+Each provider record keeps one current observation per product URL. The selected product is marked directly on its offer, so the URL is not duplicated in provider metadata. Stock and its timestamp live on that offer too. Hosts are normalized without a leading `www.`. Older cache versions and old cache filenames are normalized automatically.
 
 Prefer a generic searchName such as フワンテ 111/103 over provider-specific punctuation such as フワンテ(111/103). When a provider returns no collector-number match or cannot verify the set, that negative result is cached per provider too; no incorrect product URL is stored, and the result expires with the same product-cache TTL. Product availability checks can also be cached with --product-cache-ttl-hours; a cached zero-stock result is skipped until that TTL expires. The default product-cache TTL is 24 hours.
 

@@ -21,6 +21,8 @@ export interface ProductResolution {
 
 export interface ProductOfferSnapshot {
   url: string | null;
+  /** The product selected for reuse by this provider. */
+  selected?: boolean;
   price: number | null;
   stock: number | null;
   available: boolean;
@@ -28,7 +30,6 @@ export interface ProductOfferSnapshot {
 }
 
 export interface ProductProviderCache {
-  selectedUrl?: string;
   resolution?: ProductResolution;
   offers: ProductOfferSnapshot[];
 }
@@ -103,6 +104,16 @@ function getProviderCache(entry: unknown, hostname: string) {
     : null;
 }
 
+function getSelectedOffer(provider: ProductProviderCache | null) {
+  if (!provider) return null;
+
+  return (
+    provider.offers.find((offer) => offer.selected) ??
+    provider.offers[0] ??
+    null
+  );
+}
+
 /** Read current multi-URL entries and legacy single-URL entries. */
 export function getCachedProductUrls(entry: unknown) {
   const legacyValues =
@@ -126,13 +137,17 @@ export function getCachedProductUrls(entry: unknown) {
       )) {
         if (!provider || typeof provider !== 'object') continue;
         const record = provider as Record<string, unknown>;
+
+        // Read old cache files until they are normalized and re-saved.
         providerValues.push(record.selectedUrl);
         if (Array.isArray(record.offers)) {
+          const offers = record.offers.filter(
+            (offer): offer is Record<string, unknown> =>
+              Boolean(offer) && typeof offer === 'object',
+          );
           providerValues.push(
-            ...record.offers.flatMap((offer) =>
-              offer && typeof offer === 'object'
-                ? [(offer as Record<string, unknown>).url]
-                : [],
+            ...[...offers.filter((offer) => offer.selected), ...offers].map(
+              (offer) => offer.url,
             ),
           );
         }
@@ -192,10 +207,7 @@ export function getCachedProductAvailability(
   }
 
   const provider = getProviderCache(entry, hostname);
-  const selectedUrl = provider?.selectedUrl;
-  const offer = provider?.offers.find(
-    (item) => !selectedUrl || item.url === selectedUrl,
-  );
+  const offer = getSelectedOffer(provider);
 
   if (offer && typeof offer.stock === 'number') {
     const timestamp = Date.parse(offer.checkedAt);
@@ -295,9 +307,11 @@ export async function cacheProductOffers(
   const key = getProductCacheKey(card);
   const previous = productCache.get(key);
   const provider = normalizeProductHostname(hostname);
-  const byIdentity = new Map(
+  const current = getProviderCache(previous, hostname);
+  const selectedUrl = getSelectedOffer(current)?.url ?? null;
+  const byUrl = new Map(
     getCachedProductOffers(previous, hostname).map((offer) => [
-      `${offer.url ?? ''}:${offer.price ?? ''}:${offer.stock ?? ''}`,
+      offer.url ?? '',
       offer,
     ]),
   );
@@ -305,18 +319,16 @@ export async function cacheProductOffers(
   for (const offer of offers) {
     const snapshot = {
       ...offer,
+      selected: selectedUrl !== null && offer.url === selectedUrl,
       checkedAt: offer.checkedAt ?? new Date().toISOString(),
     };
-    byIdentity.set(
-      `${snapshot.url ?? ''}:${snapshot.price ?? ''}:${snapshot.stock ?? ''}`,
-      snapshot,
-    );
+    byUrl.set(snapshot.url ?? '', snapshot);
   }
 
   const providers = { ...(previous?.providers ?? {}) };
   providers[provider] = {
     ...(providers[provider] ?? {}),
-    offers: [...byIdentity.values()],
+    offers: selectCachedOffer([...byUrl.values()], selectedUrl),
   };
 
   productCache.set(key, {
@@ -433,13 +445,11 @@ export async function cacheProductAvailability(
   const provider = normalizeProductHostname(hostname);
   const providers = { ...(previous?.providers ?? {}) };
   const current = providers[provider];
-  const selectedUrl = current?.selectedUrl;
+  const selectedOffer = getSelectedOffer(current ?? null);
   const checkedAt = new Date().toISOString();
   const stock = Math.max(0, Math.floor(availableQuantity));
   const offers = (current?.offers ?? []).map((offer) =>
-    !selectedUrl || offer.url === selectedUrl
-      ? { ...offer, stock, checkedAt }
-      : offer,
+    offer === selectedOffer ? { ...offer, stock, checkedAt } : offer,
   );
 
   providers[provider] = {
@@ -478,11 +488,18 @@ export async function cacheProduct(
   const providers = { ...(previous?.providers ?? {}) };
   const provider = providers[hostname];
 
-  const nextProvider = {
-    ...(provider ?? {}),
-    selectedUrl: url,
-    offers: provider?.offers ?? [],
-  };
+  const offers = [...(provider?.offers ?? [])];
+  if (!offers.some((offer) => offer.url === url)) {
+    offers.push({
+      url,
+      price: null,
+      stock: null,
+      available: false,
+      checkedAt: new Date().toISOString(),
+    });
+  }
+  selectCachedOffer(offers, url);
+  const nextProvider = { ...(provider ?? {}), offers };
   delete nextProvider.resolution;
   providers[hostname] = nextProvider;
 
@@ -566,7 +583,7 @@ export async function loadProductCache() {
       );
 
       const needsNormalization =
-        cached.version !== 1 ||
+        cached.version !== 2 ||
         Object.values(cached.products).some((value) => {
           if (
             !value ||
@@ -581,7 +598,9 @@ export async function loadProductCache() {
           return Object.values(providers as Record<string, unknown>).some(
             (provider) => {
               if (!provider || typeof provider !== 'object') return true;
-              const offers = (provider as Record<string, unknown>).offers;
+              const record = provider as Record<string, unknown>;
+              if ('selectedUrl' in record) return true;
+              const offers = record.offers;
               return (
                 Array.isArray(offers) &&
                 offers.some(
@@ -716,7 +735,64 @@ function normalizeProductOffer(value: unknown): ProductOfferSnapshot | null {
 
   if (typeof record.available !== 'boolean' || !checkedAt) return null;
 
-  return { url, price, stock, available: record.available, checkedAt };
+  return {
+    url,
+    ...(record.selected === true ? { selected: true } : {}),
+    price,
+    stock,
+    available: record.available,
+    checkedAt,
+  };
+}
+
+function selectCachedOffer(
+  offers: ProductOfferSnapshot[],
+  selectedUrl: string | null,
+  checkedAt = new Date().toISOString(),
+) {
+  if (!selectedUrl) return offers;
+
+  let selected = false;
+  for (const offer of offers) {
+    if (offer.url === selectedUrl) {
+      offer.selected = true;
+      selected = true;
+    } else {
+      delete offer.selected;
+    }
+  }
+
+  if (!selected) {
+    offers.push({
+      url: selectedUrl,
+      selected: true,
+      price: null,
+      stock: null,
+      available: false,
+      checkedAt,
+    });
+  }
+
+  return offers;
+}
+
+/** Keep one current observation per product URL and one selected product. */
+function deduplicateCachedOffers(offers: ProductOfferSnapshot[]) {
+  const selectedUrl = offers.find((offer) => offer.selected)?.url ?? null;
+  const byUrl = new Map<string, ProductOfferSnapshot>();
+
+  for (const offer of offers) {
+    const previous = byUrl.get(offer.url ?? '');
+    const selected = offer.selected || previous?.selected;
+    const snapshot = { ...offer };
+    delete snapshot.selected;
+    byUrl.set(offer.url ?? '', {
+      ...snapshot,
+      ...(selected ? { selected: true } : {}),
+    });
+  }
+
+  return selectCachedOffer([...byUrl.values()], selectedUrl);
 }
 
 function normalizeProductProvider(value: unknown): ProductProviderCache {
@@ -736,8 +812,10 @@ function normalizeProductProvider(value: unknown): ProductProviderCache {
       : undefined;
 
   return {
-    selectedUrl: selectedUrl ?? undefined,
-    offers,
+    offers: selectCachedOffer(
+      deduplicateCachedOffers(offers),
+      selectedUrl ?? getSelectedOffer({ offers })?.url ?? null,
+    ),
     resolution,
   };
 }
@@ -769,27 +847,22 @@ function normalizeProductCacheEntry(value: unknown): ProductCacheEntry {
     const hostname = getHostname(url);
     if (!hostname) continue;
     const provider = ensureProvider(hostname);
-    provider.selectedUrl ??= url;
+    selectCachedOffer(provider.offers, url);
   }
 
   // Migrate the old provider-keyed offer map into provider records.
   const legacyOffers = normalizeProductOffers(object.offers);
   for (const [hostname, offers] of Object.entries(legacyOffers ?? {})) {
     const provider = ensureProvider(hostname);
-    const byIdentity = new Map(
-      provider.offers.map((offer) => [
-        `${offer.url ?? ''}:${offer.price ?? ''}:${offer.stock ?? ''}`,
-        offer,
-      ]),
+    const selectedUrl = getSelectedOffer(provider)?.url ?? null;
+    const byUrl = new Map(
+      provider.offers.map((offer) => [offer.url ?? '', offer]),
     );
     for (const offer of offers) {
-      byIdentity.set(
-        `${offer.url ?? ''}:${offer.price ?? ''}:${offer.stock ?? ''}`,
-        offer,
-      );
-      if (offer.url && !provider.selectedUrl) provider.selectedUrl = offer.url;
+      byUrl.set(offer.url ?? '', offer);
     }
-    provider.offers = [...byIdentity.values()];
+    provider.offers = [...byUrl.values()];
+    selectCachedOffer(provider.offers, selectedUrl);
   }
 
   const legacyResolution = normalizeProductResolution(object.resolution);
@@ -804,21 +877,25 @@ function normalizeProductCacheEntry(value: unknown): ProductCacheEntry {
     legacyAvailability ?? {},
   )) {
     const provider = ensureProvider(hostname);
-    const selected = provider.selectedUrl
-      ? provider.offers.find((offer) => offer.url === provider.selectedUrl)
-      : provider.offers[0];
+    const selected = getSelectedOffer(provider);
 
     if (selected) {
       selected.stock = availability.availableQuantity;
       selected.checkedAt = availability.checkedAt;
-    } else if (provider.selectedUrl) {
-      provider.offers.push({
-        url: provider.selectedUrl,
-        price: null,
-        stock: availability.availableQuantity,
-        available: availability.availableQuantity > 0,
-        checkedAt: availability.checkedAt,
-      });
+    } else {
+      const fallbackUrl = getCachedProductUrls(object).find(
+        (url) => getHostname(url) === hostname,
+      );
+      if (fallbackUrl) {
+        provider.offers.push({
+          url: fallbackUrl,
+          selected: true,
+          price: null,
+          stock: availability.availableQuantity,
+          available: availability.availableQuantity > 0,
+          checkedAt: availability.checkedAt,
+        });
+      }
     }
   }
 
@@ -847,7 +924,7 @@ async function saveProductCache() {
       PRODUCT_CACHE_FILE,
       `${JSON.stringify(
         {
-          version: 1,
+          version: 2,
           updatedAt: new Date().toISOString(),
           products: Object.fromEntries(productCache),
         },
