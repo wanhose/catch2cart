@@ -1,0 +1,40 @@
+{
+  "name": "catch2cart",
+  "version": "1.0.0",
+  "description": "Cardmarket wishlist to multi-provider cart assistant",
+  "main": "index.ts",
+  "scripts": {
+    "start": "node index.ts",
+    "test": "pnpm run typecheck && node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write index.ts src test package.json README.md eslint.config.js .prettierrc.json tsconfig.json",
+    "format:check": "prettier --check index.ts src test package.json README.md eslint.config.js .prettierrc.json tsconfig.json"
+  },
+  "keywords": [],
+  "author": "catch2cart contributors",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.4.2",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@12.4.2",
+  "type": "module",
+  "dependencies": {
+    "@motemen/pokemon-data": "^9.5.0",
+    "playwright": "^1.63.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.3",
+    "eslint": "^10.11.0",
+    "prettier": "^3.9.8",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0"
+  }
+}
