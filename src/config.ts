@@ -160,9 +160,6 @@ export const VERBOSE_OUTPUT = process.argv.includes('--verbose');
 
 export const NO_DASHBOARD = process.argv.includes('--no-dashboard');
 
-export const REPORT_ENABLED =
-  process.argv.includes('--report') || process.argv.includes('--cost-report');
-
 export const DASHBOARD_ENABLED =
   Boolean(process.stdout.isTTY) && !VERBOSE_OUTPUT && !NO_DASHBOARD;
 
@@ -224,8 +221,7 @@ export const USE_PRODUCT_CACHE =
   process.argv.includes('--dorasuta-product-cache') ||
   process.argv.includes('--clear-product-cache') ||
   process.argv.includes('--clear-dorasuta-cache') ||
-  process.argv.includes('--clear-dorasuta-product-cache') ||
-  REPORT_ENABLED;
+  process.argv.includes('--clear-dorasuta-product-cache');
 
 export const CLEAR_PRODUCT_CACHE =
   process.argv.includes('--clear-product-cache') ||

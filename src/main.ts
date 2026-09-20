@@ -15,7 +15,6 @@ import {
   CDP_ENDPOINT,
   PROVIDER_STRATEGY,
   PROVIDERS,
-  REPORT_ENABLED,
   SAMURAI_SWORD_SET_LIST_URL,
 } from './config.ts';
 import {
@@ -34,11 +33,7 @@ import {
   validatePokemonDataset,
 } from './cards.ts';
 import { collectCardmarketCardsWithCache } from './inputs/cardmarket.ts';
-import {
-  getCachedProductEntry,
-  getProductCacheKey,
-  loadProductCache,
-} from './product-cache.ts';
+import { loadProductCache } from './product-cache.ts';
 import { selectProviderOffers } from './providers/strategy.ts';
 import {
   matchProviderProduct,
@@ -66,7 +61,6 @@ import {
 } from './providers/toreca.ts';
 import { processTorecaCard } from './providers/workflows/toreca.ts';
 import { loadSetCache, refreshSetCache } from './set-cache.ts';
-import { buildCostReport, formatCostReport } from './report.ts';
 
 let cartQuantities = new Map();
 let connectedBrowser = null;
@@ -112,8 +106,6 @@ function selectBatch(cards) {
  */
 /** Run the complete wishlist-to-cart workflow. */
 async function main() {
-  const runStartedAt = Date.now();
-
   startDashboard(0, {
     mode: COMMIT
       ? 'COMMIT · cart updates enabled'
@@ -1552,17 +1544,6 @@ async function main() {
     status: 'Completed',
   });
   stopDashboard();
-
-  if (REPORT_ENABLED) {
-    const report = buildCostReport(
-      cards,
-      PROVIDERS,
-      (key) => getCachedProductEntry(key),
-      (card) => getProductCacheKey(card),
-      runStartedAt,
-    );
-    outputLog(formatCostReport(report));
-  }
 
   for (const error of runErrors) {
     outputLog(`ERROR: ${error}`);
