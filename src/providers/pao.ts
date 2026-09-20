@@ -4,6 +4,7 @@ import type { Page } from 'playwright';
 import { NAVIGATION_TIMEOUT_MS } from '../config.ts';
 import { gotoAndWait } from '../browser.ts';
 import { normalizeWhitespace, parseCollectorNumber } from '../cards.ts';
+import type { ProviderCartEntry } from './matching.ts';
 
 export const PAO_URL = 'https://pao-onlineshop.com';
 export const PAO_SEARCH_URL = PAO_URL + '/view/search';
@@ -128,6 +129,18 @@ export async function readPaoCart(page: Page) {
   return Object.fromEntries(entries.map((entry) => [entry.productId, entry]));
 }
 
+export function dedupePaoCartEntries(entries: ProviderCartEntry[]) {
+  const uniqueEntries = new Map<string, ProviderCartEntry>();
+
+  for (const entry of entries) {
+    if (entry.productId && !uniqueEntries.has(entry.productId)) {
+      uniqueEntries.set(entry.productId, entry);
+    }
+  }
+
+  return [...uniqueEntries.values()];
+}
+
 export async function readPaoCartEntries(page: Page) {
   await gotoAndWait(page, PAO_CART_URL, {
     waitUntil: 'domcontentloaded',
@@ -155,16 +168,18 @@ export async function readPaoCartEntries(page: Page) {
         };
       }),
     );
-  return rows.map((row) => {
-    const id = row.id.replace(/^makeshop-common-cart-quantity:/, '');
-    return {
-      productId: id.match(/^\d+/)?.[0] ?? '',
-      url: row.url,
-      productName: row.productName,
-      quantity: Number(row.quantity),
-      price: parsePaoPrice(row.price),
-    };
-  });
+  return dedupePaoCartEntries(
+    rows.map((row) => {
+      const id = row.id.replace(/^makeshop-common-cart-quantity:/, '');
+      return {
+        productId: id.match(/^\d+/)?.[0] ?? '',
+        url: row.url,
+        productName: row.productName,
+        quantity: Number(row.quantity),
+        price: parsePaoPrice(row.price),
+      };
+    }),
+  );
 }
 
 /** Add a verified quantity from the current PAO product page to the cart. */

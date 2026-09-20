@@ -1,11 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  dedupePaoCartEntries,
   parsePaoCartRows,
   parsePaoPrice,
   parsePaoProductTitle,
   parsePaoStock,
 } from '../src/providers/pao.ts';
+
+test('deduplicates PAO cart entries rendered in multiple layouts', () => {
+  const entry = {
+    productId: '000000150173',
+    url: 'https://pao-onlineshop.com/view/item/150173',
+    productName: 'ロケット団のヘルガー AR 100/098',
+    quantity: 1,
+    price: 560,
+  };
+
+  assert.deepEqual(dedupePaoCartEntries([entry, { ...entry }]), [entry]);
+});
 
 test('parses PAO product identity, price and stock', () => {
   assert.deepEqual(
