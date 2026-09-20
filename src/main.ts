@@ -346,7 +346,41 @@ async function main() {
         matchProviderProduct(card, entry).kind !== 'none',
     );
 
-  startDashboard(cards.length);
+  const globallyCoveredCardIndexes = new Set<number>();
+  for (const [index, card] of cards.entries()) {
+    if (isCoveredByAnyCart(card)) {
+      globallyCoveredCardIndexes.add(index);
+    }
+  }
+
+  const dashboardProviderCount =
+    PROVIDER_STRATEGY === 'cheapest' && PROVIDERS.length > 1
+      ? PROVIDERS.length
+      : Number(Boolean(dorasutaPage)) +
+        Number(Boolean(manaSourcePage)) +
+        Number(Boolean(paoPage)) +
+        Number(Boolean(torecaPage));
+  const firstPendingIndex = cards.findIndex(
+    (_, index) => !globallyCoveredCardIndexes.has(index),
+  );
+  const initialCard =
+    firstPendingIndex === -1
+      ? 'Completed'
+      : cards[firstPendingIndex].cardmarketName +
+        ' (' +
+        cards[firstPendingIndex].set +
+        ' ' +
+        cards[firstPendingIndex].number +
+        ')';
+
+  startDashboard(cards.length, {
+    current: firstPendingIndex === -1 ? cards.length : firstPendingIndex + 1,
+    card: initialCard,
+    completed: globallyCoveredCardIndexes.size,
+    skipped: globallyCoveredCardIndexes.size,
+    phase: firstPendingIndex === -1 ? 'Completed' : 'Ready',
+    status: firstPendingIndex === -1 ? 'Completed' : 'Waiting',
+  });
 
   const summary: Record<string, number> = {};
   const runErrors = [];
@@ -386,14 +420,17 @@ async function main() {
     });
   };
 
-  const dashboardProviderCount =
-    PROVIDER_STRATEGY === 'cheapest' && PROVIDERS.length > 1
-      ? PROVIDERS.length
-      : Number(Boolean(dorasutaPage)) +
-        Number(Boolean(manaSourcePage)) +
-        Number(Boolean(paoPage)) +
-        Number(Boolean(torecaPage));
   const completedProviderCards = cards.map(() => new Map());
+  for (const index of globallyCoveredCardIndexes) {
+    for (const provider of PROVIDERS) {
+      completedProviderCards[index].set(provider, {
+        status: 'ALREADY_IN_CART',
+        added: false,
+        partial: false,
+        price: null,
+      });
+    }
+  }
   const blockedProviders = new Set();
   const synchronizeAllProviders =
     PROVIDER_STRATEGY === 'all' && PROVIDERS.length > 1;
@@ -481,8 +518,7 @@ async function main() {
       (async () => {
         for (let i = 0; i < cards.length; i++) {
           await waitForProviderTurn(i);
-          if (isCoveredByAnyCart(cards[i])) {
-            recordProviderCard(i, 'dorasuta', 'ALREADY_IN_CART');
+          if (globallyCoveredCardIndexes.has(i)) {
             finishProviderTurn(i);
             continue;
           }
@@ -619,8 +655,7 @@ async function main() {
       (async () => {
         for (let i = 0; i < cards.length; i++) {
           await waitForProviderTurn(i);
-          if (isCoveredByAnyCart(cards[i])) {
-            recordProviderCard(i, 'manasource', 'ALREADY_IN_CART');
+          if (globallyCoveredCardIndexes.has(i)) {
             finishProviderTurn(i);
             continue;
           }
@@ -734,8 +769,7 @@ async function main() {
       (async () => {
         for (let i = 0; i < cards.length; i++) {
           await waitForProviderTurn(i);
-          if (isCoveredByAnyCart(cards[i])) {
-            recordProviderCard(i, 'pao', 'ALREADY_IN_CART');
+          if (globallyCoveredCardIndexes.has(i)) {
             finishProviderTurn(i);
             continue;
           }
@@ -832,8 +866,7 @@ async function main() {
       (async () => {
         for (let i = 0; i < cards.length; i++) {
           await waitForProviderTurn(i);
-          if (isCoveredByAnyCart(cards[i])) {
-            recordProviderCard(i, 'toreca', 'ALREADY_IN_CART');
+          if (globallyCoveredCardIndexes.has(i)) {
             finishProviderTurn(i);
             continue;
           }
@@ -909,18 +942,7 @@ async function main() {
       let paoPreflightStatus: string | null = null;
       let torecaPreflightStatus: string | null = null;
 
-      if (isCoveredByAnyCart(cards[i])) {
-        const alreadyInCartProviders = [
-          'dorasuta',
-          'manasource',
-          'pao',
-          'toreca',
-        ];
-
-        for (const provider of alreadyInCartProviders) {
-          recordProviderCard(i, provider, 'ALREADY_IN_CART');
-        }
-
+      if (globallyCoveredCardIndexes.has(i)) {
         summary.CHEAPEST_ALREADY_IN_CART =
           (summary.CHEAPEST_ALREADY_IN_CART ?? 0) + 1;
         continue;

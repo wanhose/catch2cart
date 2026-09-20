@@ -144,10 +144,16 @@ function renderDashboard() {
   ];
 
   const cursorUp = dashboardLineCount ? `\x1b[${dashboardLineCount}A` : '';
+  const clearPrevious = dashboardLineCount
+    ? '\x1b[2K\x1b[1B'.repeat(dashboardLineCount - 1) +
+      '\x1b[2K' +
+      `\x1b[${dashboardLineCount - 1}A`
+    : '';
 
   process.stdout.write(
     (dashboardLineCount ? '' : 'catch2cart\n') +
       cursorUp +
+      clearPrevious +
       '\x1b[0J' +
       `${lines.join('\n')}\n`,
   );
@@ -170,7 +176,7 @@ export function getDashboardState() {
 }
 
 /** Initialise the dashboard counters for a new card-processing run. */
-export function startDashboard(total) {
+export function startDashboard(total, initialState = {}) {
   dashboardState = {
     current: 0,
     total,
@@ -183,6 +189,7 @@ export function startDashboard(total) {
     skipped: 0,
     errors: 0,
     errorMessages: [],
+    ...initialState,
   };
 
   dashboardLineCount = 0;
