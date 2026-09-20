@@ -17,15 +17,58 @@ export interface PokemonSetMetadata {
   mainSetTotal: number;
 }
 
+/** Sets released before the public metadata table lists them. */
+const BUILT_IN_SET_METADATA = new Map<string, PokemonSetMetadata>([
+  [
+    'mc',
+    {
+      englishName: 'MEGA Start Deck 100 Battle Collection',
+      japaneseName: 'スタートデッキ100 バトルコレクション',
+      mainSetTotal: 742,
+    },
+  ],
+]);
+
 let setsByCode = new Map<string, PokemonSetMetadata>();
 
+interface SamuraiSwordSetRow {
+  cells: string[];
+  links?: Array<{ href: string; text: string; cellIndex: number }>;
+}
+
+/** Read the actual Cardmarket-compatible code from a per-set card-list link. */
+function getSetCodeFromCardListUrl(href: string) {
+  try {
+    return new URL(href).pathname
+      .match(/\/([a-z0-9]+)-card-list\/?$/i)?.[1]
+      ?.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 /** Parse Samurai Sword Tokyo table columns without mixing language fields. */
-export function parseSamuraiSwordSets(rows: { cells: string[] }[]) {
+export function parseSamuraiSwordSets(rows: SamuraiSwordSetRow[]) {
   const sets = new Map<string, PokemonSetMetadata>();
-  for (const { cells } of rows) {
-    const code = normalizeWhitespace(cells[0] ?? '')
+  for (const { cells, links = [] } of rows) {
+    const fallbackCode = normalizeWhitespace(cells[0] ?? '')
       .match(/^([a-z]+\d+[a-z]*)/i)?.[1]
       ?.toLowerCase();
+    const linkedCodes = links
+      .map((link) => ({ link, code: getSetCodeFromCardListUrl(link.href) }))
+      .filter(
+        (
+          item,
+        ): item is {
+          link: SamuraiSwordSetRow['links'][number];
+          code: string;
+        } => Boolean(item.code),
+      );
+    const codes = linkedCodes.length
+      ? linkedCodes
+      : fallbackCode
+        ? [{ link: null, code: fallbackCode }]
+        : [];
     const hasExplicitLanguageColumns = cells.length >= 7;
     const explicitEnglishName = hasExplicitLanguageColumns
       ? normalizeWhitespace(cells[2] ?? '')
@@ -42,20 +85,41 @@ export function parseSamuraiSwordSets(rows: { cells: string[] }[]) {
       normalizeWhitespace(totalCell ?? '').match(/^\d+/)?.[0],
     );
     if (
-      !code ||
+      !codes.length ||
       !japaneseName ||
       !englishName ||
       !Number.isInteger(total) ||
       total <= 0
     )
       continue;
-    sets.set(code, {
-      englishName,
-      japaneseName,
-      mainSetTotal: total,
-    });
+
+    const japaneseNames = japaneseName.split('/').map(normalizeWhitespace);
+    for (const [index, { link, code }] of codes.entries()) {
+      sets.set(code, {
+        englishName:
+          linkedCodes.length > 1
+            ? normalizeWhitespace(link?.text ?? '') || englishName
+            : englishName,
+        japaneseName:
+          linkedCodes.length > 1
+            ? japaneseNames[index] || japaneseName
+            : japaneseName,
+        mainSetTotal: total,
+      });
+    }
   }
   return sets;
+}
+
+/** Keep metadata for releases missing from the public source across refreshes. */
+export function addBuiltInSetMetadata(sets: Map<string, PokemonSetMetadata>) {
+  const merged = new Map(sets);
+
+  for (const [code, metadata] of BUILT_IN_SET_METADATA) {
+    merged.set(code, metadata);
+  }
+
+  return merged;
 }
 
 export function getPokemonSet(setCode: string) {
@@ -104,11 +168,13 @@ export async function loadSetCache() {
       return false;
     const entries = Object.entries(cached.sets);
     if (entries.some(([, value]) => !isSetMetadata(value))) return false;
-    setsByCode = new Map(
-      entries.map(([code, value]) => [
-        code.toLowerCase(),
-        value as PokemonSetMetadata,
-      ]),
+    setsByCode = addBuiltInSetMetadata(
+      new Map(
+        entries.map(([code, value]) => [
+          code.toLowerCase(),
+          value as PokemonSetMetadata,
+        ]),
+      ),
     );
     outputLog('Using set cache: ' + setsByCode.size + ' structured set(s)');
     return setsByCode.size > 0;
@@ -129,9 +195,16 @@ export async function refreshSetCache(page: Page) {
         cells: [...row.querySelectorAll('td')].map(
           (cell) => cell.textContent ?? '',
         ),
+        links: [...row.querySelectorAll('a[href]')].map((link) => ({
+          href: (link as HTMLAnchorElement).href,
+          text: link.textContent ?? '',
+          cellIndex: [...row.querySelectorAll('td')].findIndex((cell) =>
+            cell.contains(link),
+          ),
+        })),
       })),
     );
-  setsByCode = parseSamuraiSwordSets(rows);
+  setsByCode = addBuiltInSetMetadata(parseSamuraiSwordSets(rows));
   if (!setsByCode.size)
     throw new Error('Set metadata page did not yield any coded sets.');
   await writeFile(

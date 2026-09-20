@@ -44,18 +44,9 @@ interface ManaSourceCard {
   number: string;
 }
 
-/** Reject a product whose Japanese collection contradicts a known set code. */
-function matchesManaSourceSet(card, product) {
-  return (
-    matchProviderProduct(
-      {
-        set: card.set,
-        number: product.collectorNumber ?? '',
-        cardmarketName: card.cardmarketName,
-      },
-      product,
-    ).kind !== 'none'
-  );
+/** Rank verified identities before comparing price. */
+function getManaSourceMatch(card, product) {
+  return matchProviderProduct(card, product);
 }
 
 /** Resolve, verify and optionally add one wishlist card on ManaSource. */
@@ -139,7 +130,7 @@ export async function processManaSourceCard(
     if (
       (cachedProduct.collectorNumber === null ||
         numbersEqual(cachedProduct.collectorNumber, card.number)) &&
-      matchesManaSourceSet(card, cachedProduct)
+      getManaSourceMatch(card, cachedProduct).kind !== 'none'
     ) {
       product = cachedProduct;
 
@@ -212,7 +203,7 @@ export async function processManaSourceCard(
       candidate,
       product: inspectedCandidate,
     } of inspectedCandidates) {
-      if (matchesManaSourceSet(card, inspectedCandidate)) {
+      if (getManaSourceMatch(card, inspectedCandidate).kind !== 'none') {
         verifiedCandidates.push({ candidate, product: inspectedCandidate });
       }
     }
@@ -249,6 +240,11 @@ export async function processManaSourceCard(
     }
 
     const matched = [...availableCandidates].sort((a, b) => {
+      const matchPriority =
+        getManaSourceMatch(card, b.product).score -
+        getManaSourceMatch(card, a.product).score;
+      if (matchPriority !== 0) return matchPriority;
+
       const aPrice = a.product.price;
       const bPrice = b.product.price;
       if (aPrice === null && bPrice === null) return 0;

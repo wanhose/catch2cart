@@ -195,6 +195,11 @@ export async function processPaoCard(
     }
 
     product = [...availableMatches].sort((a, b) => {
+      const matchPriority =
+        matchProviderProduct(card, b).score -
+        matchProviderProduct(card, a).score;
+      if (matchPriority !== 0) return matchPriority;
+
       if (a.price === null && b.price === null) return 0;
       if (a.price === null) return 1;
       if (b.price === null) return -1;

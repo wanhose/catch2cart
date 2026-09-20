@@ -338,6 +338,7 @@ export function getCachedProductResolution(
 
     if (
       provider.resolution.status &&
+      provider.resolution.status !== 'SET_METADATA_NOT_FOUND' &&
       Number.isFinite(timestamp) &&
       (PRODUCT_CACHE_TTL_HOURS === 0 ||
         Date.now() - timestamp <= PRODUCT_CACHE_TTL_HOURS * 60 * 60 * 1000)
@@ -367,6 +368,7 @@ export function getCachedProductResolution(
   if (
     typeof record.status !== 'string' ||
     !record.status ||
+    record.status === 'SET_METADATA_NOT_FOUND' ||
     typeof record.checkedAt !== 'string' ||
     !Number.isFinite(timestamp)
   ) {

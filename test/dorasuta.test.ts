@@ -67,6 +67,20 @@ test('reads current and legacy product cache entries', () => {
     )?.status,
     'NO_NUMBER_MATCH',
   );
+  assert.equal(
+    getCachedProductResolution(
+      {
+        resolution: {
+          'dorasuta.jp': {
+            status: 'SET_METADATA_NOT_FOUND',
+            checkedAt: new Date().toISOString(),
+          },
+        },
+      },
+      'dorasuta.jp',
+    ),
+    null,
+  );
 });
 
 test('reads observed provider offers, including sold-out products', () => {

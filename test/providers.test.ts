@@ -65,6 +65,16 @@ test('parses ManaSource identity embedded in product titles', () => {
     getManaSourceCollectionUrl(2359),
     'https://www.manasource.net/product-list/2359',
   );
+  assert.deepEqual(
+    parseManaSourceProductTitle('【PROMO】名探偵ピカチュウ 098/SV-P'),
+    {
+      productName: '【PROMO】名探偵ピカチュウ 098/SV-P',
+      setCode: 'PROMO',
+      collectionName: 'PROMO',
+      collectorNumber: '098',
+      totalNumber: 'SV-P',
+    },
+  );
 });
 
 test('preserves ManaSource stock semantics from the HTML', () => {

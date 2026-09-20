@@ -19,21 +19,39 @@ export function formatProviderNumberTotal(number: string, total: number) {
   return `${numberText}/${totalText}`;
 }
 
+function formatProviderNumber(number: string) {
+  return String(number).padStart(3, '0');
+}
+
+function isPromoSetCode(setCode: string) {
+  return ['sv-p', 's-p'].includes(setCode.toLowerCase());
+}
+
 export function buildProviderSearchQueries(
   searchName: string,
   card: WishlistCardIdentity,
 ) {
   const number = String(card.number);
   const total = getPokemonSetTotal(card.set);
-  if (!total || !/^\d+$/.test(number)) return [];
+  if (!/^\d+$/.test(number)) return [];
 
-  const formattedNumberTotal = formatProviderNumberTotal(number, total);
+  const formattedNumber = formatProviderNumber(number);
   const unpaddedNumber = number.replace(/^0+/, '') || '0';
   const trailingNumber = new RegExp(
     `(?:\\s+0*${unpaddedNumber})+(?:\\s*/\\s*0*\\d+)?$`,
   );
   const baseName = normalizeWhitespace(searchName).replace(trailingNumber, '');
 
+  if (isPromoSetCode(card.set)) {
+    const formattedPromoNumber = `${formattedNumber}/${card.set.toUpperCase()}`;
+    return [[baseName, formattedPromoNumber].join(' '), formattedPromoNumber];
+  }
+
+  if (!total) {
+    return [[baseName, formattedNumber].join(' '), formattedNumber];
+  }
+
+  const formattedNumberTotal = formatProviderNumberTotal(number, total);
   return [
     [baseName, formattedNumberTotal].join(' '),
     formattedNumberTotal,
@@ -74,10 +92,18 @@ export interface ProductMatch {
   score: number;
 }
 
-function parseNumberAndTotal(value: string | null | undefined) {
-  const match = normalizeWhitespace(value).match(/(\d+)\s*\/\s*(\d+)/);
+function parseNumberIdentity(value: string | null | undefined) {
+  const match = normalizeWhitespace(value).match(
+    /(\d+)\s*\/\s*([A-Za-z][A-Za-z0-9-]*|\d+)/,
+  );
 
-  return match ? { number: match[1], total: match[2] } : null;
+  if (!match) return null;
+
+  return {
+    number: match[1],
+    total: /^\d+$/.test(match[2]) ? match[2] : null,
+    setCode: /^\d+$/.test(match[2]) ? null : match[2],
+  };
 }
 
 /** Normalize provider labels without depending on punctuation or separators. */
@@ -102,6 +128,10 @@ function includesNormalizedIdentity(
   );
 }
 
+function isStructuredSetCode(value: string) {
+  return /^(?:[a-z]+\d+[a-z]*|(?:s|sv)-p)$/i.test(value);
+}
+
 /**
  * Evaluate the identity fields exposed by every product provider.
  *
@@ -113,10 +143,11 @@ export function matchProviderProduct(
   card: WishlistCardIdentity,
   product: ProviderProductIdentity,
 ): ProductMatch {
-  const parsedTitle = parseNumberAndTotal(product.productName);
+  const parsedTitle = parseNumberIdentity(product.productName);
   const collectorNumber =
     product.collectorNumber ?? parsedTitle?.number ?? null;
   const totalNumber = product.totalNumber ?? parsedTitle?.total ?? null;
+  const productSetCode = parsedTitle?.setCode ?? product.setCode ?? null;
 
   if (!collectorNumber || !numbersEqual(card.number, collectorNumber)) {
     return { kind: 'none', score: 0 };
@@ -125,16 +156,22 @@ export function matchProviderProduct(
   const metadata = getPokemonSet(card.set);
   const expectedTotal = metadata?.mainSetTotal ?? null;
 
+  const setCodeMatches =
+    productSetCode !== null &&
+    normalizeIdentityText(productSetCode) === normalizeIdentityText(card.set);
+
+  if (isPromoSetCode(card.set)) {
+    return setCodeMatches
+      ? { kind: 'exact', score: 150 }
+      : { kind: 'none', score: 0 };
+  }
+
   if (expectedTotal !== null && totalNumber !== null) {
     if (!numbersEqual(expectedTotal, totalNumber)) {
       return { kind: 'none', score: 0 };
     }
   }
 
-  const setCodeMatches =
-    product.setCode !== null &&
-    product.setCode !== undefined &&
-    normalizeIdentityText(product.setCode) === normalizeIdentityText(card.set);
   const collectionNameMatches =
     Boolean(metadata) &&
     includesNormalizedIdentity(metadata?.japaneseName, product.collectionName);
@@ -150,12 +187,9 @@ export function matchProviderProduct(
     (expectedTotal === null || numbersEqual(expectedTotal, totalNumber));
 
   if (
-    product.setCode !== null &&
-    product.setCode !== undefined &&
-    /^[a-z]+\d+[a-z]*$/i.test(product.setCode) &&
-    !setCodeMatches &&
-    !collectionNameMatches &&
-    !pokemonNameMatches
+    productSetCode !== null &&
+    isStructuredSetCode(productSetCode) &&
+    !setCodeMatches
   ) {
     return { kind: 'none', score: 0 };
   }

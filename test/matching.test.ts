@@ -12,23 +12,40 @@ test('pads the main-set total to match zero-padded collector numbers', () => {
   assert.equal(formatProviderNumberTotal('67', 89), '067/089');
 });
 
-test('refuses to build a query when set metadata is unavailable', () => {
+test('falls back to name plus number, then number, when set metadata is unavailable', () => {
   assert.deepEqual(
     buildProviderSearchQueries('ラティオス 070/064', {
       set: 'sv7a',
       number: '070',
     }),
-    [],
+    ['ラティオス 070', '070'],
   );
 });
 
-test('never builds a weak name-only or number-only query', () => {
+test('uses the padded collector number as the final fallback', () => {
   assert.deepEqual(
     buildProviderSearchQueries('ピカチュウ 001', {
       set: 'unknown-set',
       number: '001',
     }),
-    [],
+    ['ピカチュウ 001', '001'],
+  );
+});
+
+test('uses the printed promo identifier for SV-P and S-P', () => {
+  assert.deepEqual(
+    buildProviderSearchQueries('ピカチュウ', {
+      set: 'sv-p',
+      number: '001',
+    }),
+    ['ピカチュウ 001/SV-P', '001/SV-P'],
+  );
+  assert.deepEqual(
+    buildProviderSearchQueries('サダイジャV', {
+      set: 's-p',
+      number: '174',
+    }),
+    ['サダイジャV 174/S-P', '174/S-P'],
   );
 });
 
@@ -61,6 +78,29 @@ test('rejects a number/total match with a contradictory set code', () => {
       },
     ),
     { kind: 'none', score: 0 },
+  );
+});
+
+test('requires the printed set code for promo cards', () => {
+  assert.equal(
+    matchProviderProduct(
+      { set: 'sv-p', number: '001', cardmarketName: 'Pikachu' },
+      {
+        productName: 'ピカチュウ PROMO 001/SV-P',
+        collectorNumber: '001',
+      },
+    ).kind,
+    'exact',
+  );
+  assert.equal(
+    matchProviderProduct(
+      { set: 'sv-p', number: '001', cardmarketName: 'Pikachu' },
+      {
+        productName: 'ピカチュウ PROMO 001/S-P',
+        collectorNumber: '001',
+      },
+    ).kind,
+    'none',
   );
 });
 

@@ -14,16 +14,22 @@ export interface PaoProductIdentity {
   productName: string;
   collectorNumber: string | null;
   totalNumber: string | null;
+  setCode: string | null;
 }
 
 export function parsePaoProductTitle(title: string): PaoProductIdentity {
   const productName = normalizeWhitespace(title);
-  const numberAndTotal = productName.match(/(\d+)\s*\/\s*(\d+)/);
+  const numberAndIdentity = productName.match(
+    /(\d+)\s*\/\s*([A-Za-z][A-Za-z0-9-]*|\d+)/,
+  );
+  const suffix = numberAndIdentity?.[2] ?? null;
 
   return {
     productName,
-    collectorNumber: numberAndTotal?.[1] ?? parseCollectorNumber(productName),
-    totalNumber: numberAndTotal?.[2] ?? null,
+    collectorNumber:
+      numberAndIdentity?.[1] ?? parseCollectorNumber(productName),
+    totalNumber: suffix && /^\d+$/.test(suffix) ? suffix : null,
+    setCode: suffix && !/^\d+$/.test(suffix) ? suffix : null,
   };
 }
 
@@ -78,13 +84,15 @@ export async function searchPao(page: Page, searchName: string) {
         const identity = title
           .replace(/\s+/g, ' ')
           .trim()
-          .match(/(\d+)\s*\/\s*(\d+)/);
+          .match(/(\d+)\s*\/\s*([A-Za-z][A-Za-z0-9-]*|\d+)/);
+        const suffix = identity?.[2] ?? null;
         return {
           url: href,
           externalId: href.match(/\/view\/item\/(\d+)/)?.[1] ?? null,
           productName: title.replace(/\s+/g, ' ').trim(),
           collectorNumber: identity?.[1] ?? null,
-          totalNumber: identity?.[2] ?? null,
+          totalNumber: suffix && /^\d+$/.test(suffix) ? suffix : null,
+          setCode: suffix && !/^\d+$/.test(suffix) ? suffix : null,
           price:
             Number((price.match(/[\d,]+/)?.[0] ?? '').replaceAll(',', '')) ||
             null,

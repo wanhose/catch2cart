@@ -17,15 +17,20 @@ export interface TorecaProductIdentity {
 
 export function parseTorecaProductTitle(title: string): TorecaProductIdentity {
   const productName = normalizeWhitespace(title);
-  const match = productName.match(/\b(\d+)\s*\/\s*(\d+)\b/);
+  const match = productName.match(
+    /\b(\d+)\s*\/\s*([A-Za-z][A-Za-z0-9-]*|\d+)\b/,
+  );
   const beforeNumber = match ? productName.slice(0, match.index) : productName;
+  const suffix = match?.[2] ?? null;
   const setCode =
-    beforeNumber?.match(/\b([A-Za-z]{1,6}\d+[A-Za-z]*)\s*$/)?.[1] ?? null;
+    (suffix && !/^\d+$/.test(suffix) ? suffix : null) ??
+    beforeNumber?.match(/\b([A-Za-z]{1,6}\d+[A-Za-z]*)\s*$/)?.[1] ??
+    null;
 
   return {
     productName,
     collectorNumber: match?.[1] ?? parseCollectorNumber(productName),
-    totalNumber: match?.[2] ?? null,
+    totalNumber: suffix && /^\d+$/.test(suffix) ? suffix : null,
     setCode,
   };
 }

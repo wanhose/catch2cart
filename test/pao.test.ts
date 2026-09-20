@@ -31,12 +31,22 @@ test('parses PAO product identity, price and stock', () => {
       productName: '★特価祭り★【プレイ用】ロケット団のヘルガー AR 100/098',
       collectorNumber: '100',
       totalNumber: '098',
+      setCode: null,
     },
   );
   assert.equal(parsePaoPrice('560円(税込)'), 560);
   assert.equal(parsePaoStock('残りあと4個'), 4);
   assert.equal(parsePaoStock('在庫なし'), 0);
   assert.equal(parsePaoStock('SOLD OUT'), 0);
+});
+
+test('parses a printed promo identifier from a PAO product title', () => {
+  assert.deepEqual(parsePaoProductTitle('名探偵ピカチュウ PROMO 098/SV-P'), {
+    productName: '名探偵ピカチュウ PROMO 098/SV-P',
+    collectorNumber: '098',
+    totalNumber: null,
+    setCode: 'SV-P',
+  });
 });
 
 test('reads PAO cart line identities and quantities', () => {

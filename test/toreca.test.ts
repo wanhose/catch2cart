@@ -23,6 +23,15 @@ test('parses Toreca identity from Japanese product titles', () => {
   );
 });
 
+test('parses a printed promo identifier from a Toreca product title', () => {
+  assert.deepEqual(parseTorecaProductTitle('名探偵ピカチュウ PROMO 098/SV-P'), {
+    productName: '名探偵ピカチュウ PROMO 098/SV-P',
+    collectorNumber: '098',
+    totalNumber: null,
+    setCode: 'SV-P',
+  });
+});
+
 test('parses single and range prices', () => {
   assert.equal(parseTorecaPrice('¥280～¥380'), 280);
   assert.equal(parseTorecaPrice('¥11,800'), 11800);
