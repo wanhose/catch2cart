@@ -6,7 +6,6 @@
  */
 
 import { DASHBOARD_ENABLED } from './config.ts';
-import { clearScreenDown, moveCursor } from 'node:readline';
 
 const RAW_CONSOLE_LOG = console.log.bind(console);
 
@@ -147,8 +146,7 @@ function renderDashboard() {
   const dashboard = ['catch2cart', ...lines].join('\n') + '\n';
 
   if (dashboardLineCount) {
-    moveCursor(process.stdout, 0, -dashboardLineCount);
-    clearScreenDown(process.stdout);
+    process.stdout.write('\x1b[1A\x1b[2K'.repeat(dashboardLineCount) + '\r');
   }
 
   process.stdout.write((dashboardLineCount ? '' : '\n') + dashboard);
