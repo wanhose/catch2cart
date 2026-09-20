@@ -26,6 +26,9 @@ import {
   parseManaSourceProductId,
   searchManaSource,
 } from '../manasource.ts';
+import { getProviderHostname } from '../registry.ts';
+
+const MANASOURCE_HOSTNAME = getProviderHostname('manasource');
 
 export type ManaSourceCartQuantities = Map<string, number | null>;
 
@@ -90,12 +93,12 @@ export async function processManaSourceCard(
   const cacheEntry = getCachedProductEntry(getProductCacheKey(card));
   const cachedUrl = getCachedProductUrlsForProvider(
     cacheEntry,
-    'www.manasource.net',
+    MANASOURCE_HOSTNAME,
   )[0];
   const cachedSearchName = getCachedProductSearchName(cacheEntry);
   const cachedResolution = cachedUrl
     ? null
-    : getCachedProductResolution(cacheEntry, 'www.manasource.net');
+    : getCachedProductResolution(cacheEntry, MANASOURCE_HOSTNAME);
   let product = null;
   let candidatesWereInspected = false;
 
@@ -111,7 +114,7 @@ export async function processManaSourceCard(
       : undefined;
     const cachedAvailability = getCachedProductAvailability(
       cacheEntry,
-      'www.manasource.net',
+      MANASOURCE_HOSTNAME,
     );
     if (
       cachedProductId &&
@@ -152,7 +155,7 @@ export async function processManaSourceCard(
     await options.onCandidatesReady?.(0);
     await cacheProductResolution(
       card,
-      'www.manasource.net',
+      MANASOURCE_HOSTNAME,
       'SET_METADATA_NOT_FOUND',
       cachedSearchName ?? japanese.searchName,
     );
@@ -181,7 +184,7 @@ export async function processManaSourceCard(
       await options.onCandidatesReady?.(0);
       await cacheProductResolution(
         card,
-        'www.manasource.net',
+        MANASOURCE_HOSTNAME,
         'NO_NUMBER_MATCH',
         searchName,
       );
@@ -211,7 +214,7 @@ export async function processManaSourceCard(
     if (!verifiedCandidates.length) {
       await cacheProductResolution(
         card,
-        'www.manasource.net',
+        MANASOURCE_HOSTNAME,
         'SET_NOT_VERIFIED',
         searchName,
       );
@@ -220,7 +223,7 @@ export async function processManaSourceCard(
 
     await cacheProductOffers(
       card,
-      'www.manasource.net',
+      MANASOURCE_HOSTNAME,
       verifiedCandidates.map(({ product: candidateProduct }) => ({
         url: candidateProduct.url,
         price: candidateProduct.price,
@@ -260,10 +263,10 @@ export async function processManaSourceCard(
 
   await cacheProductAvailability(
     card,
-    'www.manasource.net',
+    MANASOURCE_HOSTNAME,
     product.availableQuantity,
   );
-  await cacheProductOffers(card, 'www.manasource.net', [
+  await cacheProductOffers(card, MANASOURCE_HOSTNAME, [
     {
       url: product.url,
       price: product.price,

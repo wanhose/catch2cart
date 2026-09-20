@@ -43,6 +43,16 @@ export const PROVIDER_REGISTRY: Record<ProviderName, ProviderDescriptor> = {
   },
 };
 
+/** Return the canonical user-facing label for a configured provider. */
+export function getProviderLabel(provider: ProviderName) {
+  return PROVIDER_REGISTRY[provider].label;
+}
+
+/** Return the canonical hostname used for provider-scoped cache records. */
+export function getProviderHostname(provider: ProviderName) {
+  return PROVIDER_REGISTRY[provider].hostname;
+}
+
 /** Parse a provider list while preserving its declared order. */
 export function parseProviderSelection(value: string): ProviderName[] {
   const requested = value

@@ -20,10 +20,11 @@ import {
   NAVIGATION_TIMEOUT_MS,
 } from './config.ts';
 import { outputLog, updateDashboard } from './output.ts';
+import { getProviderHostname } from './providers/registry.ts';
 
 const navigationStates = new WeakMap();
 let lastDorasutaSearchAt = 0;
-const DORASUTA_HOSTNAME = 'dorasuta.jp';
+const DORASUTA_HOSTNAME = getProviderHostname('dorasuta');
 
 /** Resolve after the requested delay without blocking the event loop. */
 function sleep(milliseconds) {

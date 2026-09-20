@@ -22,8 +22,9 @@ import {
   matchProviderProduct,
   type ProviderCartEntry,
 } from '../matching.ts';
+import { getProviderHostname } from '../registry.ts';
 
-const PAO_HOSTNAME = 'pao-onlineshop.com';
+const PAO_HOSTNAME = getProviderHostname('pao');
 
 export type PaoCartQuantities = Record<
   string,

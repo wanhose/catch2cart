@@ -40,7 +40,7 @@ import {
   matchProviderProduct,
   type ProviderCartEntry,
 } from './providers/matching.ts';
-import { PROVIDER_REGISTRY } from './providers/registry.ts';
+import { getProviderLabel, PROVIDER_REGISTRY } from './providers/registry.ts';
 import type { ProviderOffer } from './providers/types.ts';
 import {
   readCartEntries,
@@ -152,15 +152,7 @@ async function main() {
   );
 
   updateDashboard({
-    provider: PROVIDERS.map((provider) =>
-      provider === 'manasource'
-        ? 'ManaSource'
-        : provider === 'pao'
-          ? 'PAO'
-          : provider === 'toreca'
-            ? 'Toreca'
-            : 'Dorasuta',
-    ).join(', '),
+    provider: PROVIDERS.map(getProviderLabel).join(', '),
     phase: 'Preparing Cardmarket',
     status: `${PROVIDER_STRATEGY} strategy`,
   });
@@ -732,16 +724,11 @@ async function main() {
       phase: 'Completed',
       status: [...results.entries()]
         .map(([provider, value]) => {
-          const label =
-            provider === 'manasource'
-              ? 'ManaSource'
-              : provider === 'pao'
-                ? 'PAO'
-                : provider === 'toreca'
-                  ? 'Toreca'
-                  : 'Dorasuta';
-
-          return label + ': ' + formatDashboardStatus(value.status);
+          return (
+            getProviderLabel(provider) +
+            ': ' +
+            formatDashboardStatus(value.status)
+          );
         })
         .join(' · '),
     });
@@ -1704,13 +1691,6 @@ async function main() {
       }
     }
 
-    const providerLabels = {
-      dorasuta: 'Dorasuta',
-      manasource: 'ManaSource',
-      pao: 'PAO',
-      toreca: 'Toreca',
-    };
-
     outputLog('');
     outputLog(
       COMMIT ? 'Cards added by provider:' : 'Cards planned by provider:',
@@ -1719,7 +1699,7 @@ async function main() {
     for (const provider of PROVIDERS) {
       const providerCards = addedByProvider.get(provider) ?? [];
       outputLog(
-        `${providerLabels[provider]} (${providerCards.length}):` +
+        `${getProviderLabel(provider)} (${providerCards.length}):` +
           (providerCards.length ? '' : ' none'),
       );
 
@@ -1738,14 +1718,7 @@ async function main() {
       const providerFailures = providerResults
         .filter(([, result]) => notFoundStatuses.has(result.status))
         .map(([provider, result]) => ({
-          provider:
-            provider === 'manasource'
-              ? 'ManaSource'
-              : provider === 'pao'
-                ? 'PAO'
-                : provider === 'toreca'
-                  ? 'Toreca'
-                  : 'Dorasuta',
+          provider: getProviderLabel(provider),
           status: result.status,
         }));
 

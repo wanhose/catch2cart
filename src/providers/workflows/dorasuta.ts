@@ -31,6 +31,7 @@ import {
   getProductCacheKey,
 } from '../../product-cache.ts';
 import { gotoAndWait } from '../../browser.ts';
+import { getProviderHostname } from '../registry.ts';
 import {
   addToCartAndWait,
   chooseCondition,
@@ -45,6 +46,8 @@ import {
   searchDorasuta,
   setQuantity,
 } from '../dorasuta.ts';
+
+const DORASUTA_HOSTNAME = getProviderHostname('dorasuta');
 
 /** Resolve one wishlist card and optionally add only its missing quantity. */
 export async function processDorasutaCard(
@@ -100,10 +103,10 @@ export async function processDorasutaCard(
   let searchNameForCache = null;
 
   const cachedUrl =
-    getCachedProductUrlsForProvider(cachedEntry, 'dorasuta.jp')[0] ?? null;
+    getCachedProductUrlsForProvider(cachedEntry, DORASUTA_HOSTNAME)[0] ?? null;
   const cachedResolution = cachedUrl
     ? null
-    : getCachedProductResolution(cachedEntry, 'dorasuta.jp');
+    : getCachedProductResolution(cachedEntry, DORASUTA_HOSTNAME);
 
   if (cachedResolution) {
     await options.onCandidatesReady?.(0);
@@ -125,7 +128,7 @@ export async function processDorasutaCard(
       : undefined;
     const cachedAvailability = getCachedProductAvailability(
       cachedEntry,
-      'dorasuta.jp',
+      DORASUTA_HOSTNAME,
     );
 
     if (
@@ -212,7 +215,7 @@ export async function processDorasutaCard(
       );
       await cacheProductResolution(
         card,
-        'dorasuta.jp',
+        DORASUTA_HOSTNAME,
         'SET_METADATA_NOT_FOUND',
         searchName,
       );
@@ -247,7 +250,7 @@ export async function processDorasutaCard(
       outputLog('  SKIP: collector number not found in search results.');
       await cacheProductResolution(
         card,
-        'dorasuta.jp',
+        DORASUTA_HOSTNAME,
         'NO_NUMBER_MATCH',
         searchNameForCache,
       );
@@ -302,7 +305,7 @@ export async function processDorasutaCard(
       outputLog('  SKIP: set + collector number did not match.');
       await cacheProductResolution(
         card,
-        'dorasuta.jp',
+        DORASUTA_HOSTNAME,
         'NO_EXACT_MATCH',
         searchNameForCache,
       );
@@ -406,7 +409,7 @@ export async function processDorasutaCard(
   const conditions = await findConditionOptions(page);
   await cacheProductOffers(
     card,
-    'dorasuta.jp',
+    DORASUTA_HOSTNAME,
     conditions.map((option) => ({
       url: product.url,
       price: option.price,
@@ -422,7 +425,7 @@ export async function processDorasutaCard(
     return Math.max(maximum, item.stock);
   }, 0);
 
-  await cacheProductAvailability(card, 'dorasuta.jp', verifiedStock);
+  await cacheProductAvailability(card, DORASUTA_HOSTNAME, verifiedStock);
 
   if (conditions.length) {
     for (const option of conditions) {

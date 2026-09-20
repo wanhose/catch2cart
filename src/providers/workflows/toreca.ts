@@ -26,8 +26,9 @@ import {
   matchProviderProduct,
   type ProviderCartEntry,
 } from '../matching.ts';
+import { getProviderHostname } from '../registry.ts';
 
-const TORECA_HOSTNAME = 'torecacamp-pokemon.com';
+const TORECA_HOSTNAME = getProviderHostname('toreca');
 export type TorecaCartQuantities = Map<string, number>;
 
 interface TorecaCard {

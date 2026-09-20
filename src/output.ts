@@ -7,6 +7,8 @@
 
 import { DASHBOARD_ENABLED } from './config.ts';
 import { createLogUpdate } from 'log-update';
+import { getProviderLabel } from './providers/registry.ts';
+import type { ProviderName } from './providers/types.ts';
 
 const RAW_CONSOLE_LOG = console.log.bind(console);
 const INTERACTIVE_DASHBOARD_ENABLED =
@@ -36,16 +38,12 @@ const DASHBOARD_STATUS_LABELS = {
   NO_RESULT: 'No result',
 };
 
-const PROVIDER_LABELS = {
-  dorasuta: 'Dorasuta',
-  manasource: 'ManaSource',
-  pao: 'PAO',
-  toreca: 'Toreca',
-  cheapest: 'Cheapest',
-};
+const CHEAPEST_LABEL = 'Cheapest';
 
 const PROVIDER_ORDER = new Map(
-  Object.keys(PROVIDER_LABELS).map((provider, index) => [provider, index]),
+  ['dorasuta', 'manasource', 'pao', 'toreca', 'cheapest'].map(
+    (provider, index) => [provider, index],
+  ),
 );
 
 const SUMMARY_RESULT_ORDER = new Map(
@@ -73,7 +71,10 @@ const SUMMARY_RESULT_ORDER = new Map(
   ].map((result, index) => [result, index]),
 );
 
-function getSummaryStatusParts(status: string) {
+function getSummaryStatusParts(status: string): {
+  provider: ProviderName | 'cheapest' | null;
+  result: string;
+} {
   const providerMatch = status.match(/^(MANASOURCE|PAO|TORECA)_(.+)$/);
   const cheapestMatch = status.match(
     /^CHEAPEST_(dorasuta|manasource|pao|toreca)_(.+)$/,
@@ -81,7 +82,10 @@ function getSummaryStatusParts(status: string) {
   const cheapestResultMatch = status.match(/^CHEAPEST_(.+)$/);
 
   if (cheapestMatch) {
-    return { provider: cheapestMatch[1], result: cheapestMatch[2] };
+    return {
+      provider: cheapestMatch[1] as ProviderName,
+      result: cheapestMatch[2],
+    };
   }
 
   if (cheapestResultMatch) {
@@ -90,7 +94,7 @@ function getSummaryStatusParts(status: string) {
 
   if (providerMatch) {
     return {
-      provider: providerMatch[1].toLowerCase(),
+      provider: providerMatch[1].toLowerCase() as ProviderName,
       result: providerMatch[2],
     };
   }
@@ -129,7 +133,14 @@ export function formatSummaryStatus(status: string) {
   const { provider, result } = getSummaryStatusParts(status);
   const label = formatDashboardStatus(result);
 
-  return provider ? PROVIDER_LABELS[provider] + ' · ' + label : label;
+  const providerLabel =
+    provider === 'cheapest'
+      ? CHEAPEST_LABEL
+      : provider
+        ? getProviderLabel(provider)
+        : null;
+
+  return providerLabel ? providerLabel + ' · ' + label : label;
 }
 
 /** Sort summary rows by provider and then by a stable result priority. */

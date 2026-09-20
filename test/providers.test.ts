@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  getProviderHostname,
+  getProviderLabel,
   parseProviderSelection,
   parseProviderStrategy,
 } from '../src/providers/registry.ts';
@@ -35,6 +37,12 @@ test('resolves the default provider selection to implemented providers', () => {
 test('rejects unknown providers and accepts implemented providers', () => {
   assert.throws(() => parseProviderSelection('unknown'), /Unknown provider/);
   assert.deepEqual(parseProviderSelection('manasource'), ['manasource']);
+});
+
+test('reads provider labels and hostnames from the shared registry', () => {
+  assert.equal(getProviderLabel('manasource'), 'ManaSource');
+  assert.equal(getProviderLabel('pao'), 'PAO');
+  assert.equal(getProviderHostname('toreca'), 'torecacamp-pokemon.com');
 });
 
 test('parses provider distribution strategies', () => {
