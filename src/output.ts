@@ -1,13 +1,16 @@
 /**
  * Console output and the optional terminal dashboard.
  *
- * Detailed logs are suppressed while the dashboard is active so the terminal
- * remains readable. `--verbose` and `--no-dashboard` disable that behaviour.
+ * Detailed logs are suppressed while the dashboard tracks the current card.
+ * `--verbose` and `--no-dashboard` disable the interactive dashboard.
  */
 
 import { DASHBOARD_ENABLED } from './config.ts';
+import { createLogUpdate } from 'log-update';
 
 const RAW_CONSOLE_LOG = console.log.bind(console);
+const INTERACTIVE_DASHBOARD_ENABLED =
+  DASHBOARD_ENABLED && Boolean(process.stdout.isTTY);
 
 const DASHBOARD_STATUS_LABELS = {
   ADDED_TO_CART: 'Added to cart',
@@ -97,7 +100,10 @@ export function formatDashboardStatus(status) {
 }
 
 let dashboardActive = false;
-let dashboardLineCount = 0;
+const dashboardLog = createLogUpdate(process.stdout, {
+  defaultHeight: 50,
+  defaultWidth: 120,
+});
 let dashboardState = {
   current: 0,
   total: 0,
@@ -122,7 +128,7 @@ export function outputLog(...args) {
 }
 
 function renderDashboard() {
-  if (!DASHBOARD_ENABLED || !dashboardActive) {
+  if (!INTERACTIVE_DASHBOARD_ENABLED || !dashboardActive) {
     return;
   }
 
@@ -143,14 +149,7 @@ function renderDashboard() {
     ...dashboardState.errorMessages.map((message) => `Error: ${message}`),
   ];
 
-  const dashboard = ['catch2cart', ...lines].join('\n') + '\n';
-
-  if (dashboardLineCount) {
-    process.stdout.write('\x1b[1A\x1b[2K'.repeat(dashboardLineCount) + '\r');
-  }
-
-  process.stdout.write((dashboardLineCount ? '' : '\n') + dashboard);
-  dashboardLineCount = lines.length + 1;
+  dashboardLog(['catch2cart', ...lines].join('\n'));
 }
 
 /** Merge state changes and redraw the dashboard when it is enabled. */
@@ -185,13 +184,14 @@ export function startDashboard(total, initialState = {}) {
     ...initialState,
   };
 
-  dashboardLineCount = 0;
-  dashboardActive = true;
+  dashboardActive = INTERACTIVE_DASHBOARD_ENABLED;
   renderDashboard();
 }
 
 /** Stop rendering without clearing the user's terminal scrollback. */
 export function stopDashboard() {
+  if (dashboardActive) {
+    dashboardLog.done();
+  }
   dashboardActive = false;
-  dashboardLineCount = 0;
 }

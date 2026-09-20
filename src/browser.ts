@@ -258,7 +258,8 @@ export async function gotoAndWait(page, url, options = {}) {
 
   if (samePageUrl(page.url(), url)) {
     await waitForNavigationGap();
-    outputLog(`  Reusing current page after pacing delay: ${url}`);
+    const hostname = new URL(url).hostname;
+    outputLog(`  Reusing ${hostname} page after pacing delay: ${url}`);
   } else {
     result = await gotoPageWithRetries(page, url, options);
   }

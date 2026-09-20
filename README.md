@@ -226,6 +226,11 @@ Use both caches together:
 
 ## Options and configuration
 
+When running in an interactive terminal, catch2cart keeps a compact live
+dashboard for the current card and progress counters. Detailed diagnostic logs
+are hidden while it is active; use `--no-dashboard` or `--verbose` when a plain
+streaming log is preferable.
+
 | Option                            | Default               | Purpose                                                            |
 | --------------------------------- | --------------------- | ------------------------------------------------------------------ |
 | --commit                          | disabled              | Actually add products to carts.                                    |
