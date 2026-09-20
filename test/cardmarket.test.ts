@@ -69,3 +69,26 @@ test('does not merge cards with different set or collector number', () => {
 
   assert.equal(cards.length, 3);
 });
+
+test('merges the same set and number when wishlist names differ', () => {
+  const cards = mergeWishlistCards([
+    {
+      cardmarketName: 'Fuecoco ex',
+      quantity: 1,
+      set: 'm6a',
+      number: '124',
+      wishlistUrl: 'list-1',
+    },
+    {
+      cardmarketName: 'Fuecoco ex (Japanese)',
+      quantity: 1,
+      set: 'm6a',
+      number: '124',
+      wishlistUrl: 'list-2',
+    },
+  ]);
+
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].quantity, 1);
+  assert.deepEqual(cards[0].wishlistUrls, ['list-1', 'list-2']);
+});

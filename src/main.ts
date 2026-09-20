@@ -350,6 +350,7 @@ async function main() {
       globallyCoveredCardIndexes.add(index);
     }
   }
+  const initiallyCoveredCardIndexes = new Set(globallyCoveredCardIndexes);
 
   const dashboardProviderCount =
     PROVIDER_STRATEGY === 'cheapest' && PROVIDERS.length > 1
@@ -468,6 +469,13 @@ async function main() {
 
     results.set(provider, { status, added, partial, price });
 
+    if (
+      COMMIT &&
+      (status === 'ALREADY_IN_CART' || status === 'ADDED_TO_CART')
+    ) {
+      globallyCoveredCardIndexes.add(index);
+    }
+
     if (results.size < dashboardProviderCount) {
       return;
     }
@@ -517,6 +525,9 @@ async function main() {
         for (let i = 0; i < cards.length; i++) {
           await waitForProviderTurn(i);
           if (globallyCoveredCardIndexes.has(i)) {
+            if (!initiallyCoveredCardIndexes.has(i)) {
+              recordProviderCard(i, 'dorasuta', 'ALREADY_IN_CART');
+            }
             finishProviderTurn(i);
             continue;
           }
@@ -654,6 +665,9 @@ async function main() {
         for (let i = 0; i < cards.length; i++) {
           await waitForProviderTurn(i);
           if (globallyCoveredCardIndexes.has(i)) {
+            if (!initiallyCoveredCardIndexes.has(i)) {
+              recordProviderCard(i, 'manasource', 'ALREADY_IN_CART');
+            }
             finishProviderTurn(i);
             continue;
           }
@@ -768,6 +782,9 @@ async function main() {
         for (let i = 0; i < cards.length; i++) {
           await waitForProviderTurn(i);
           if (globallyCoveredCardIndexes.has(i)) {
+            if (!initiallyCoveredCardIndexes.has(i)) {
+              recordProviderCard(i, 'pao', 'ALREADY_IN_CART');
+            }
             finishProviderTurn(i);
             continue;
           }
@@ -865,6 +882,9 @@ async function main() {
         for (let i = 0; i < cards.length; i++) {
           await waitForProviderTurn(i);
           if (globallyCoveredCardIndexes.has(i)) {
+            if (!initiallyCoveredCardIndexes.has(i)) {
+              recordProviderCard(i, 'toreca', 'ALREADY_IN_CART');
+            }
             finishProviderTurn(i);
             continue;
           }

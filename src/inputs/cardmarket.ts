@@ -166,11 +166,7 @@ function mergeWishlistCards(cards) {
       card.wishlistId ??
       card.wishlistUrl.match(/\/Wants\/(\d+)\/?$/i)?.[1] ??
       null;
-    const key = [
-      card.set,
-      normalizeNumber(card.number),
-      card.cardmarketName,
-    ].join(':');
+    const key = [card.set, normalizeNumber(card.number)].join(':');
 
     const existing = merged.get(key);
 
