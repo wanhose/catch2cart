@@ -1,6 +1,36 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { matchProviderProduct } from '../src/providers/matching.ts';
+import {
+  buildProviderSearchQueries,
+  formatProviderNumberTotal,
+  matchProviderProduct,
+} from '../src/providers/matching.ts';
+
+test('pads the main-set total to match zero-padded collector numbers', () => {
+  assert.equal(formatProviderNumberTotal('070', 64), '070/064');
+  assert.equal(formatProviderNumberTotal('126', 103), '126/103');
+  assert.equal(formatProviderNumberTotal('67', 89), '067/089');
+});
+
+test('refuses to build a query when set metadata is unavailable', () => {
+  assert.deepEqual(
+    buildProviderSearchQueries('ラティオス 070/064', {
+      set: 'sv7a',
+      number: '070',
+    }),
+    [],
+  );
+});
+
+test('never builds a weak name-only or number-only query', () => {
+  assert.deepEqual(
+    buildProviderSearchQueries('ピカチュウ 001', {
+      set: 'unknown-set',
+      number: '001',
+    }),
+    [],
+  );
+});
 
 test('accepts a number/total match when set metadata is unavailable', () => {
   assert.deepEqual(

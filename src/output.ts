@@ -100,18 +100,26 @@ export function formatDashboardStatus(status) {
 }
 
 let dashboardActive = false;
+let dashboardTimer: ReturnType<typeof globalThis.setInterval> | null = null;
+let dashboardAnimationFrame = 0;
+let dashboardStartedAt = 0;
 const dashboardLog = createLogUpdate(process.stdout, {
-  defaultHeight: 50,
-  defaultWidth: 120,
+  defaultHeight: 20,
+  defaultWidth: 100,
 });
+const DASHBOARD_SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const DASHBOARD_WIDTH = 78;
+const DASHBOARD_CONTENT_WIDTH = DASHBOARD_WIDTH - 4;
 let dashboardState = {
   current: 0,
   total: 0,
   card: 'Starting...',
+  mode: '—',
   phase: 'Preparing',
   status: '—',
   completed: 0,
   added: 0,
+  alreadyInCart: 0,
   partial: 0,
   skipped: 0,
   errors: 0,
@@ -137,19 +145,52 @@ function renderDashboard() {
       ? Math.round((dashboardState.completed / dashboardState.total) * 100)
       : 0;
 
+  const progressWidth = 22;
+  const filledProgress = Math.round((progress / 100) * progressWidth);
+  const progressBar =
+    '█'.repeat(filledProgress) + '░'.repeat(progressWidth - filledProgress);
+  const spinner = DASHBOARD_SPINNER[dashboardAnimationFrame];
+  const elapsedSeconds = Math.floor((Date.now() - dashboardStartedAt) / 1000);
+  const elapsed = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:${String(elapsedSeconds % 60).padStart(2, '0')}`;
+
+  const horizontal = '─'.repeat(DASHBOARD_WIDTH - 2);
+  const frame = (content = '') => {
+    const value = String(content);
+    const clipped =
+      value.length > DASHBOARD_CONTENT_WIDTH
+        ? value.slice(0, DASHBOARD_CONTENT_WIDTH - 1) + '…'
+        : value;
+
+    return `│ ${clipped.padEnd(DASHBOARD_CONTENT_WIDTH)} │`;
+  };
+  const field = (label, value) => frame(`${label.padEnd(10)} ${String(value)}`);
+
   const lines = [
-    '────────────────────────────────────────',
-    `Progress: ${dashboardState.completed}/${dashboardState.total} (${progress}%)`,
-    `Current:  ${dashboardState.current}/${dashboardState.total} · ${dashboardState.card}`,
-    `Step:     ${dashboardState.phase}`,
-    `Status:   ${dashboardState.status}`,
-    '────────────────────────────────────────',
-    `Added/planned: ${dashboardState.added}  Partial: ${dashboardState.partial}  ` +
-      `Skipped: ${dashboardState.skipped}  Errors: ${dashboardState.errors}`,
-    ...dashboardState.errorMessages.map((message) => `Error: ${message}`),
+    `┌${horizontal}┐`,
+    frame(`catch2cart · ${spinner} LIVE RUN · ${elapsed}`),
+    frame(horizontal.slice(0, DASHBOARD_CONTENT_WIDTH)),
+    field('Mode', dashboardState.mode),
+    field(
+      'Progress',
+      `[${progressBar}] ${progress}% · ${dashboardState.completed}/${dashboardState.total}`,
+    ),
+    field(
+      'Current',
+      `${dashboardState.current}/${dashboardState.total} · ${dashboardState.card}`,
+    ),
+    field('Step', `${spinner} ${dashboardState.phase}`),
+    field('Status', dashboardState.status),
+    frame(horizontal.slice(0, DASHBOARD_CONTENT_WIDTH)),
+    field(
+      'Results',
+      `${dashboardState.added} added/planned · ${dashboardState.alreadyInCart} already in cart · ` +
+        `${dashboardState.errors} errors`,
+    ),
+    ...dashboardState.errorMessages.map((message) => field('Issue', message)),
+    `└${horizontal}┘`,
   ];
 
-  dashboardLog(['catch2cart', ...lines].join('\n'));
+  dashboardLog(lines.join('\n'));
 }
 
 /** Merge state changes and redraw the dashboard when it is enabled. */
@@ -173,10 +214,12 @@ export function startDashboard(total, initialState = {}) {
     current: 0,
     total,
     card: 'Starting...',
+    mode: '—',
     phase: 'Ready',
     status: 'Waiting',
     completed: 0,
     added: 0,
+    alreadyInCart: 0,
     partial: 0,
     skipped: 0,
     errors: 0,
@@ -185,11 +228,28 @@ export function startDashboard(total, initialState = {}) {
   };
 
   dashboardActive = INTERACTIVE_DASHBOARD_ENABLED;
+  dashboardAnimationFrame = 0;
+  dashboardStartedAt = Date.now();
+
+  if (dashboardActive) {
+    dashboardTimer = globalThis.setInterval(() => {
+      dashboardAnimationFrame =
+        (dashboardAnimationFrame + 1) % DASHBOARD_SPINNER.length;
+      renderDashboard();
+    }, 120);
+    dashboardTimer.unref?.();
+  }
+
   renderDashboard();
 }
 
 /** Stop rendering without clearing the user's terminal scrollback. */
 export function stopDashboard() {
+  if (dashboardTimer) {
+    globalThis.clearInterval(dashboardTimer);
+    dashboardTimer = null;
+  }
+
   if (dashboardActive) {
     dashboardLog.done();
   }

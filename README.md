@@ -99,7 +99,7 @@ catch2cart currently supports **Japanese Pokémon cards only**. Its product prov
 
 This focus is intentional: Japanese singles can sometimes be listed on marketplaces such as Cardmarket at substantial reseller mark-ups compared with their local price in yen. Finding even one such card at Dorasuta or ManaSource can make placing an order worthwhile.
 
-When multiple product providers are selected, the final report reads each cart total and wishlist coverage independently. It also lists the cards added or planned per provider. Totals include products already present in those carts, not only items added during the current run.
+When multiple product providers are selected, the final summary reads each cart total and wishlist coverage independently. It also lists the cards added or planned per provider. Totals include products already present in those carts, not only items added during the current run. The optional `--report` is a separate provider-price analysis and does not estimate Cardmarket savings.
 
 Before searching, catch2cart checks all selected provider carts together. A card whose requested quantity is already complete in any one of those carts is marked as already in cart globally and is not searched or added to another provider.
 
@@ -137,7 +137,7 @@ Select product providers with --providers and choose the distribution strategy w
     # Compare normalized offers and select the cheapest one
     pnpm start -- --providers all --provider-strategy cheapest
 
-all means every implemented product provider selected by the registry. Dorasuta, PAO, ManaSource and Toreca are currently enabled in the main workflow. cheapest compares eligible offers using known item price and stock, then selects the lowest-priced offer. Shipping costs are not included yet. Provider-specific rate limits and Cloudflare settings remain separate because they describe a particular shop, not the provider strategy.
+all means every implemented product provider selected by the registry. Dorasuta, PAO, ManaSource and Toreca are currently enabled in the main workflow. cheapest compares eligible offers using known item price and stock, then selects the lowest-priced offer that can cover the requested quantity. Shipping costs are not included. Provider-specific rate limits and Cloudflare settings remain separate because they describe a particular shop, not the provider strategy.
 
 Product URLs are stored in the provider-neutral product cache. Each provider only reads URLs belonging to its own hostname.
 
@@ -145,11 +145,11 @@ Product URLs are stored in the provider-neutral product cache. Each provider onl
 
 The first run downloads public set metadata and stores each code, English name, Japanese name and main-set total in `.set-cache`. It uses the same TTL as `.product-cache` (24 hours by default), so no hand-maintained set dataset is required.
 
-ManaSource matches require a collector number plus a Japanese collection name from that cache. If it is stale, catch2cart refreshes it in a temporary metadata tab and closes that tab immediately. When a Dorasuta product lacks its set code, the fallback remains deliberately conservative: one search candidate and a self-consistent collector number, total and model number are required.
+ManaSource matches require a collector number plus a Japanese collection name from that cache. If it is stale, catch2cart refreshes it in a temporary metadata tab and closes that tab immediately. Product searches always use the `XXX/XXX` collector-number/main-set-total format (for example `067/089`), with the card name first; only when that search produces no matching candidates do they fall back to `XXX/XXX` alone. Unpadded forms such as `067/89` and bare collector-number searches are never used because they produce ambiguous results.
 
 ## Navigation and verification
 
-The script includes delays between navigations and searches. The default navigation gap is 10 seconds and the Dorasuta search gap is 15 seconds. If a provider presents a Cloudflare verification page, it waits for the verification to finish and allows it to be completed manually in the browser window.
+The script includes delays between navigations and searches. The default navigation gap is 10 seconds per provider tab, so different providers can search and navigate in parallel while each provider remains paced sequentially. Candidate product pages are inspected sequentially within each provider tab, and the dashboard aggregates their progress across the selected providers. Dorasuta also uses a 15-second search gap. If a provider presents a Cloudflare verification page, it waits for the verification to finish and allows it to be completed manually in the browser window.
 
 Dorasuta-specific rate-limit pages and cart-full responses stop or delay only the Dorasuta flow. The script does not attempt to bypass site controls.
 
@@ -179,7 +179,7 @@ Refresh it automatically after a maximum age:
 
     pnpm start -- --use-wishlist-cache --wishlist-cache-ttl-hours 24
 
-Use --clear-wishlist-cache to remove it before the run. The old Cardmarket-named flags remain accepted as compatibility aliases.
+Use --clear-wishlist-cache to remove and rebuild it before the run; it implies --use-wishlist-cache. The old Cardmarket-named flags remain accepted as compatibility aliases.
 
 Skip one or more Cardmarket lists by ID or full URL:
 
@@ -197,32 +197,48 @@ Cached product availability is invalidated after 24 hours by default. To configu
 
     pnpm start -- --use-product-cache --product-cache-ttl-hours 24
 
-Each card may contain URLs for multiple product providers and a generic search term:
+Each card contains a generic search term and one normalized record per product provider:
 
     {
       "version": 1,
       "products": {
         "sv8:115:perrin": {
-          "urls": [
-            "https://dorasuta.jp/pokemon-card/product?pid=123456",
-            "https://www.manasource.net/product/123456"
-          ],
           "searchName": "フワンテ 111/103",
-          "source": "manual",
-          "productName": "フワンテ 111/103"
+          "providers": {
+            "pao-onlineshop.com": {
+              "selectedUrl": "https://pao-onlineshop.com/view/item/123456",
+              "offers": [
+                {
+                  "url": "https://pao-onlineshop.com/view/item/123456",
+                  "price": 1800,
+                  "stock": 0,
+                  "available": false,
+                  "checkedAt": "2026-09-20T12:00:00.000Z"
+                }
+              ]
+            }
+          }
         }
       }
     }
 
-URLs are additive and deduplicated. Cached URLs are filtered by provider before inspection. Legacy single-url entries and old cache filenames are migrated automatically; legacy names are not the recommended configuration.
+Each provider record keeps its selected URL and all observed price, stock and condition variants. Stock and its timestamp live on the offer itself, so URLs and availability are not duplicated at the card level. Hosts are normalized without a leading `www.`. The cache remains at version 1; legacy entries and old cache filenames are normalized automatically within that version.
 
 Prefer a generic searchName such as フワンテ 111/103 over provider-specific punctuation such as フワンテ(111/103). When a provider returns no collector-number match or cannot verify the set, that negative result is cached per provider too; no incorrect product URL is stored, and the result expires with the same product-cache TTL. Product availability checks can also be cached with --product-cache-ttl-hours; a cached zero-stock result is skipped until that TTL expires. The default product-cache TTL is 24 hours.
 
-Use --clear-product-cache to remove the product cache and force a fresh set cache when a product provider is selected. The automatically managed `.set-cache` uses the same product-cache TTL; it is recreated from public metadata whenever it is stale. The old Dorasuta-named product-cache flags remain accepted as compatibility aliases.
+Use --clear-product-cache to remove and rebuild the product cache; it implies --use-product-cache and forces a fresh set cache when a product provider is selected. The automatically managed `.set-cache` uses the same product-cache TTL; it is recreated from public metadata whenever it is stale. The old Dorasuta-named product-cache flags remain accepted as compatibility aliases.
 
 Use both caches together:
 
     pnpm start -- --use-wishlist-cache --use-product-cache
+
+Use `--report` to print a provider cost comparison after the run. It uses only
+offers observed during that execution, prioritizes completing each requested
+quantity before comparing prices, and separates full, partial and unavailable
+cards. It does not assume stock when the provider does not expose a quantity,
+excludes shipping costs, and cannot calculate savings against Cardmarket because
+the wishlist input does not provide Cardmarket prices. `--cost-report` remains
+accepted as a compatibility alias.
 
 ## Options and configuration
 
@@ -236,6 +252,7 @@ streaming log is preferable.
 | --commit                          | disabled              | Actually add products to carts.                                    |
 | --verbose                         | disabled              | Keep detailed diagnostic output.                                   |
 | --no-dashboard                    | disabled              | Disable the interactive dashboard.                                 |
+| --report                          | disabled              | Print a provider cost comparison; implies --use-product-cache.     |
 | --current-wishlist                | disabled              | Process only the currently open wishlist.                          |
 | --skip-cardmarket-wishlists       | none                  | Skip wishlist IDs or URLs separated by commas.                     |
 | --providers                       | all                   | Product providers to use, comma-separated.                         |
@@ -244,15 +261,15 @@ streaming log is preferable.
 | --batch-size                      | 0                     | Process this many distinct cards per batch; 0 means all.           |
 | --batch-number                    | 1                     | Select a 1-based batch number.                                     |
 | --use-wishlist-cache              | disabled              | Reuse or create .wishlist-cache.                                   |
-| --clear-wishlist-cache            | disabled              | Delete .wishlist-cache before running.                             |
+| --clear-wishlist-cache            | disabled              | Delete and rebuild .wishlist-cache; implies --use-wishlist-cache.  |
 | --wishlist-cache-ttl-hours        | 0                     | Refresh wishlist cache after this age.                             |
 | --use-product-cache               | disabled              | Reuse or create .product-cache.                                    |
 | --product-cache-ttl-hours         | 24                    | Recheck cached stock after this age; 0 explicitly disables expiry. |
-| --clear-product-cache             | disabled              | Delete .product-cache before running.                              |
+| --clear-product-cache             | disabled              | Delete and rebuild .product-cache; implies --use-product-cache.    |
 | --wishlist-cache-file             | .wishlist-cache       | Wishlist cache path.                                               |
 | --product-cache-file              | .product-cache        | Provider-neutral product cache path.                               |
 | --cdp-endpoint                    | http://127.0.0.1:9222 | Browser CDP endpoint.                                              |
-| --navigation-gap-ms               | 10000                 | Minimum delay between navigations.                                 |
+| --navigation-gap-ms               | 10000                 | Minimum delay between navigations in each provider tab.            |
 | --navigation-retry-attempts       | 2                     | Additional attempts for transient navigation failures.             |
 | --cloudflare-poll-ms              | 3000                  | Cloudflare polling interval.                                       |
 | --cloudflare-max-wait-ms          | 600000                | Maximum Cloudflare wait.                                           |
@@ -276,7 +293,7 @@ Node 24 executes the TypeScript files directly using native type stripping. The 
 
 ### Tests
 
-The test suite uses Node’s built-in node:test runner. Tests cover wishlist parsing and merging, provider-neutral cache keys and migration formats, product matching, quantity selectors, stock handling, and provider strategy selection.
+The test suite uses Node’s built-in node:test runner. Tests cover wishlist parsing and merging, provider-neutral cache keys and migration formats, product matching, quantity selectors, stock handling, provider strategy selection, and current-run cost reports.
 
 Browser/CDP integration depends on a real logged-in browser session and should be exercised manually with dry-run mode.
 

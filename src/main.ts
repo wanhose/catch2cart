@@ -15,6 +15,7 @@ import {
   CDP_ENDPOINT,
   PROVIDER_STRATEGY,
   PROVIDERS,
+  REPORT_ENABLED,
   SAMURAI_SWORD_SET_LIST_URL,
 } from './config.ts';
 import {
@@ -29,7 +30,11 @@ import {
 import { connectToBrowser, getOrCreatePage } from './browser.ts';
 import { buildJapaneseSearchName, validatePokemonDataset } from './cards.ts';
 import { collectCardmarketCardsWithCache } from './inputs/cardmarket.ts';
-import { loadProductCache } from './product-cache.ts';
+import {
+  getCachedProductEntry,
+  getProductCacheKey,
+  loadProductCache,
+} from './product-cache.ts';
 import { selectProviderOffers } from './providers/strategy.ts';
 import {
   matchProviderProduct,
@@ -57,6 +62,7 @@ import {
 } from './providers/toreca.ts';
 import { processTorecaCard } from './providers/workflows/toreca.ts';
 import { loadSetCache, refreshSetCache } from './set-cache.ts';
+import { buildCostReport, formatCostReport } from './report.ts';
 
 let cartQuantities = new Map();
 let connectedBrowser = null;
@@ -102,7 +108,21 @@ function selectBatch(cards) {
  */
 /** Run the complete wishlist-to-cart workflow. */
 async function main() {
+  const runStartedAt = Date.now();
+
+  startDashboard(0, {
+    mode: COMMIT
+      ? 'COMMIT · cart updates enabled'
+      : 'DRY RUN · carts unchanged',
+    phase: 'Connecting to browser',
+    status: 'Starting',
+  });
+
   validatePokemonDataset();
+  updateDashboard({
+    phase: 'Connecting to browser',
+    status: 'Dataset verified',
+  });
 
   outputLog('');
   outputLog(`Connecting to browser: ${CDP_ENDPOINT}`);
@@ -112,6 +132,10 @@ async function main() {
   connectedBrowser = browser;
 
   outputLog(`Connected. ${context.pages().length} open tab(s).`);
+  updateDashboard({
+    phase: 'Preparing browser session',
+    status: `${context.pages().length} open tab(s)`,
+  });
 
   outputLog('');
   outputLog(
@@ -130,6 +154,19 @@ async function main() {
       `${selectProviderOffers(providerAvailability, PROVIDER_STRATEGY).length ? 'offers will be distributed after matching' : 'offers will be compared after matching'}.`,
   );
 
+  updateDashboard({
+    provider: PROVIDERS.map((provider) =>
+      provider === 'manasource'
+        ? 'ManaSource'
+        : provider === 'pao'
+          ? 'PAO'
+          : provider === 'toreca'
+            ? 'Toreca'
+            : 'Dorasuta',
+    ).join(', '),
+    phase: 'Preparing Cardmarket',
+    status: `${PROVIDER_STRATEGY} strategy`,
+  });
   outputLog('Preparing Cardmarket...');
 
   const cardmarketPage = await getOrCreatePage(
@@ -138,6 +175,10 @@ async function main() {
     CARDMARKET_URL,
   );
 
+  updateDashboard({
+    phase: 'Reading wishlist',
+    status: 'Collecting cards',
+  });
   const { cards: collectedCards, failures } =
     await collectCardmarketCardsWithCache(cardmarketPage);
 
@@ -199,6 +240,23 @@ async function main() {
     }
   }
 
+  updateDashboard({
+    total: cards.length,
+    current: 1,
+    card:
+      cards[0].cardmarketName +
+      ' (' +
+      cards[0].set +
+      ' ' +
+      cards[0].number +
+      ')',
+    mode: COMMIT
+      ? 'COMMIT · cart updates enabled'
+      : 'DRY RUN · carts unchanged',
+    phase: 'Preparing run',
+    status: 'Loading caches',
+  });
+
   outputLog('');
   outputLog(
     COMMIT
@@ -206,7 +264,10 @@ async function main() {
       : 'DRY RUN MODE: the cart will not be modified.',
   );
 
-  outputLog('');
+  updateDashboard({
+    phase: 'Loading product and set caches',
+    status: 'In progress',
+  });
   outputLog('Loading product and set caches...');
 
   /**
@@ -218,7 +279,11 @@ async function main() {
   const setCacheReady = await loadSetCache();
 
   if (PROVIDERS.length > 0 && !setCacheReady) {
-    outputLog('Refreshing Pokémon set cache for provider validation...');
+    updateDashboard({
+      phase: 'Refreshing public set metadata',
+      status: 'In progress',
+    });
+    outputLog('Refreshing public set metadata...');
     await closeSetMetadataPages(context);
     const setCachePage = await context.newPage();
 
@@ -230,7 +295,10 @@ async function main() {
     }
   }
 
-  outputLog('');
+  updateDashboard({
+    phase: 'Preparing product-provider tabs',
+    status: 'In progress',
+  });
   outputLog('Ensuring product-provider tabs are available...');
   const providerPages = new Map();
 
@@ -245,6 +313,12 @@ async function main() {
     );
   }
 
+  updateDashboard({
+    phase: 'Reading provider carts in parallel',
+    status: 'Waiting for cart data',
+  });
+  outputLog('Preparing provider carts in parallel...');
+
   let manaSourcePage = null;
   let manaSourceCartQuantities = new Map();
   let manaSourceCartEntries: ProviderCartEntry[] = [];
@@ -257,99 +331,173 @@ async function main() {
   let torecaCartQuantities = new Map();
   let torecaCartEntries: ProviderCartEntry[] = [];
 
+  const cartPreparationRuns: Promise<void>[] = [];
+
   if (PROVIDERS.includes('manasource')) {
-    outputLog('');
-    outputLog('Preparing ManaSource...');
+    cartPreparationRuns.push(
+      (async () => {
+        outputLog('  Preparing ManaSource...');
+        manaSourcePage = providerPages.get('manasource') ?? null;
 
-    manaSourcePage = providerPages.get('manasource') ?? null;
+        if (!manaSourcePage) {
+          throw new Error('ManaSource tab could not be prepared.');
+        }
 
-    if (!manaSourcePage) {
-      throw new Error('ManaSource tab could not be prepared.');
-    }
-
-    outputLog('Reading ManaSource cart contents...');
-    manaSourceCartEntries = await readManaSourceCartEntries(manaSourcePage);
-    manaSourceCartQuantities = new Map(
-      manaSourceCartEntries.map((entry) => [entry.productId, entry.quantity]),
+        outputLog('  Reading ManaSource cart contents...');
+        manaSourceCartEntries = await readManaSourceCartEntries(manaSourcePage);
+        manaSourceCartQuantities = new Map(
+          manaSourceCartEntries.map((entry) => [
+            entry.productId,
+            entry.quantity,
+          ]),
+        );
+        outputLog(
+          '  ManaSource cart products read: ' + manaSourceCartEntries.length,
+        );
+      })(),
     );
-    outputLog('ManaSource cart products read: ' + manaSourceCartEntries.length);
   }
 
   if (!PROVIDERS.includes('dorasuta')) {
-    outputLog('Dorasuta is not selected; skipping its cart workflow.');
+    outputLog('  Dorasuta is not selected; skipping its cart workflow.');
   } else {
-    outputLog('');
-    outputLog('Preparing Dorasuta...');
+    cartPreparationRuns.push(
+      (async () => {
+        outputLog('  Preparing Dorasuta...');
+        dorasutaPage = providerPages.get('dorasuta') ?? null;
 
-    dorasutaPage = providerPages.get('dorasuta') ?? null;
+        if (!dorasutaPage) {
+          throw new Error('Dorasuta tab could not be prepared.');
+        }
 
-    if (!dorasutaPage) {
-      throw new Error('Dorasuta tab could not be prepared.');
-    }
+        outputLog('  Reading Dorasuta cart contents...');
+        const initialCartCount = await readInitialCartCount(dorasutaPage);
 
-    outputLog('Reading Dorasuta cart contents...');
+        setInitialCartCount(initialCartCount);
 
-    const initialCartCount = await readInitialCartCount(dorasutaPage);
+        dorasutaCartEntries = await readCartEntries(dorasutaPage);
+        cartQuantities = new Map(
+          dorasutaCartEntries.map((entry) => [entry.productId, entry.quantity]),
+        );
 
-    setInitialCartCount(initialCartCount);
-
-    dorasutaCartEntries = await readCartEntries(dorasutaPage);
-    cartQuantities = new Map(
-      dorasutaCartEntries.map((entry) => [entry.productId, entry.quantity]),
+        outputLog(`  Dorasuta cart products read: ${cartQuantities.size}`);
+      })(),
     );
-
-    outputLog(`Dorasuta cart products read: ${cartQuantities.size}`);
   }
 
   if (PROVIDERS.includes('pao')) {
-    outputLog('');
-    outputLog('Preparing PAO...');
-    paoPage = providerPages.get('pao') ?? null;
+    cartPreparationRuns.push(
+      (async () => {
+        outputLog('  Preparing PAO...');
+        paoPage = providerPages.get('pao') ?? null;
 
-    if (!paoPage) {
-      throw new Error('PAO tab could not be prepared.');
-    }
+        if (!paoPage) {
+          throw new Error('PAO tab could not be prepared.');
+        }
 
-    outputLog('Reading PAO cart contents...');
-    paoCartEntries = await readPaoCartEntries(paoPage);
-    paoCartQuantities = Object.fromEntries(
-      paoCartEntries.map((entry) => [entry.productId, entry]),
+        outputLog('  Reading PAO cart contents...');
+        paoCartEntries = await readPaoCartEntries(paoPage);
+        paoCartQuantities = Object.fromEntries(
+          paoCartEntries.map((entry) => [entry.productId, entry]),
+        );
+        outputLog('  PAO cart products read: ' + paoCartEntries.length);
+      })(),
     );
-    outputLog('PAO cart products read: ' + paoCartEntries.length);
   }
 
   if (PROVIDERS.includes('toreca')) {
-    outputLog('');
-    outputLog('Preparing Toreca...');
-    torecaPage = providerPages.get('toreca') ?? null;
-    if (!torecaPage) throw new Error('Toreca tab could not be prepared.');
-    outputLog('Reading Toreca cart contents...');
-    torecaCartEntries = await readTorecaCartEntries(torecaPage);
-    torecaCartQuantities = new Map(
-      torecaCartEntries.map((entry) => [entry.productId, entry.quantity]),
+    cartPreparationRuns.push(
+      (async () => {
+        outputLog('  Preparing Toreca...');
+        torecaPage = providerPages.get('toreca') ?? null;
+        if (!torecaPage) throw new Error('Toreca tab could not be prepared.');
+        outputLog('  Reading Toreca cart contents...');
+        torecaCartEntries = await readTorecaCartEntries(torecaPage);
+        torecaCartQuantities = new Map(
+          torecaCartEntries.map((entry) => [entry.productId, entry.quantity]),
+        );
+        outputLog('  Toreca cart products read: ' + torecaCartEntries.length);
+      })(),
     );
-    outputLog('Toreca cart products read: ' + torecaCartEntries.length);
   }
 
-  const initialCartEntries: ProviderCartEntry[] = [
-    ...dorasutaCartEntries,
-    ...manaSourceCartEntries,
-    ...paoCartEntries,
-    ...torecaCartEntries,
-  ];
-  const isCoveredByAnyCart = (card) =>
-    initialCartEntries.some(
-      (entry) =>
-        entry.quantity >= card.quantity &&
-        matchProviderProduct(card, entry).kind !== 'none',
-    );
+  await Promise.all(cartPreparationRuns);
+  updateDashboard({
+    phase: 'Provider carts prepared',
+    status: `${cartPreparationRuns.length} provider(s) ready`,
+  });
+  outputLog('Provider carts prepared.');
 
-  const globallyCoveredCardIndexes = new Set<number>();
-  for (const [index, card] of cards.entries()) {
-    if (isCoveredByAnyCart(card)) {
-      globallyCoveredCardIndexes.add(index);
+  const initialCartEntries = [
+    ...dorasutaCartEntries.map((entry) => ({
+      key: `dorasuta:${entry.productId}`,
+      entry,
+    })),
+    ...manaSourceCartEntries.map((entry) => ({
+      key: `manasource:${entry.productId}`,
+      entry,
+    })),
+    ...paoCartEntries.map((entry) => ({
+      key: `pao:${entry.productId}`,
+      entry,
+    })),
+    ...torecaCartEntries.map((entry) => ({
+      key: `toreca:${entry.productId}`,
+      entry,
+    })),
+  ].filter(
+    (item, index, entries) =>
+      entries.findIndex((candidate) => candidate.key === item.key) === index,
+  );
+
+  // A cart line can cover only one wishlist card. Build a one-to-one
+  // assignment instead of allowing the same line to match every compatible
+  // card independently.
+  const matchingCartEntryForCard = new Map<number, number>();
+  const matchingCardForCartEntry = new Map<number, number>();
+  const cardMatchCandidates = cards.map((card) =>
+    initialCartEntries
+      .map(({ entry }, entryIndex) => ({
+        entryIndex,
+        score:
+          entry.quantity >= card.quantity
+            ? matchProviderProduct(card, entry).score
+            : 0,
+      }))
+      .filter((candidate) => candidate.score > 0)
+      .sort((left, right) => right.score - left.score),
+  );
+
+  const assignCartEntry = (cardIndex: number, visited: Set<number>) => {
+    for (const { entryIndex } of cardMatchCandidates[cardIndex]) {
+      if (visited.has(entryIndex)) continue;
+      visited.add(entryIndex);
+
+      const previousCardIndex = matchingCardForCartEntry.get(entryIndex);
+      if (
+        previousCardIndex === undefined ||
+        assignCartEntry(previousCardIndex, visited)
+      ) {
+        matchingCartEntryForCard.set(cardIndex, entryIndex);
+        matchingCardForCartEntry.set(entryIndex, cardIndex);
+        return true;
+      }
     }
+
+    return false;
+  };
+
+  const cardIndexesByCandidateCount = cards
+    .map((_, index) => index)
+    .sort(
+      (left, right) =>
+        cardMatchCandidates[left].length - cardMatchCandidates[right].length,
+    );
+  for (const cardIndex of cardIndexesByCandidateCount) {
+    assignCartEntry(cardIndex, new Set());
   }
+
+  const globallyCoveredCardIndexes = new Set(matchingCartEntryForCard.keys());
   const initiallyCoveredCardIndexes = new Set(globallyCoveredCardIndexes);
 
   const dashboardProviderCount =
@@ -372,11 +520,11 @@ async function main() {
         cards[firstPendingIndex].number +
         ')';
 
-  startDashboard(cards.length, {
+  updateDashboard({
     current: firstPendingIndex === -1 ? cards.length : firstPendingIndex + 1,
     card: initialCard,
     completed: globallyCoveredCardIndexes.size,
-    skipped: globallyCoveredCardIndexes.size,
+    alreadyInCart: globallyCoveredCardIndexes.size,
     phase: firstPendingIndex === -1 ? 'Completed' : 'Ready',
     status: firstPendingIndex === -1 ? 'Completed' : 'Waiting',
   });
@@ -394,6 +542,7 @@ async function main() {
     'AMBIGUOUS_MATCH',
     'PRODUCT_ID_NOT_FOUND',
     'CART_QUANTITY_UNKNOWN',
+    'SET_METADATA_NOT_FOUND',
   ]);
   const stockStatuses = new Set([
     'INSUFFICIENT_STOCK',
@@ -419,7 +568,64 @@ async function main() {
     });
   };
 
+  const candidateTotals = cards.map(() => new Map());
+  const candidateProgress = cards.map(() => new Map());
+  const reportCandidateTotal = (cardIndex, provider, total) => {
+    candidateTotals[cardIndex].set(provider, total);
+
+    const discovered = candidateTotals[cardIndex].size;
+    const candidateTotal = [...candidateTotals[cardIndex].values()].reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+    const checkedTotal = [...candidateProgress[cardIndex].values()].reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+    const usingCachedProducts =
+      candidateTotals[cardIndex].size > 0 &&
+      [...candidateTotals[cardIndex].values()].every((value) => value === 0);
+    updateDashboard({
+      phase:
+        discovered < dashboardProviderCount
+          ? usingCachedProducts
+            ? `Reusing cached products ${discovered}/${dashboardProviderCount}`
+            : `Preparing candidate pages ${discovered}/${dashboardProviderCount}`
+          : candidateTotal === 0
+            ? 'Using cached product data'
+            : `Checking candidates ${checkedTotal}/${candidateTotal}`,
+    });
+  };
+
+  const reportCandidateProgress = (cardIndex, provider, checked) => {
+    candidateProgress[cardIndex].set(provider, checked);
+    const checkedTotal = [...candidateProgress[cardIndex].values()].reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+    const candidateTotal = [...candidateTotals[cardIndex].values()].reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+    const discovered = candidateTotals[cardIndex].size;
+    const usingCachedProducts =
+      discovered > 0 &&
+      [...candidateTotals[cardIndex].values()].every((value) => value === 0);
+
+    updateDashboard({
+      phase:
+        discovered < dashboardProviderCount
+          ? usingCachedProducts
+            ? `Reusing cached products ${discovered}/${dashboardProviderCount}`
+            : `Preparing candidate pages ${discovered}/${dashboardProviderCount}`
+          : candidateTotal === 0
+            ? 'Using cached product data'
+            : `Checking candidates ${checkedTotal}/${candidateTotal}`,
+    });
+  };
+
   const completedProviderCards = cards.map(() => new Map());
+  const dashboardCompletedCardIndexes = new Set(globallyCoveredCardIndexes);
   for (const index of globallyCoveredCardIndexes) {
     for (const provider of PROVIDERS) {
       completedProviderCards[index].set(provider, {
@@ -483,21 +689,35 @@ async function main() {
     const values = [...results.values()];
     const card = cards[index];
     const hasAdded = values.some((value) => value.added);
+    const alreadyInCart = values.some(
+      (value) => value.status === 'ALREADY_IN_CART',
+    );
     const hasPartial = values.some((value) => value.partial);
+    const isFirstDashboardCompletion =
+      !dashboardCompletedCardIndexes.has(index);
+
+    if (isFirstDashboardCompletion) {
+      dashboardCompletedCardIndexes.add(index);
+    }
 
     updateDashboard({
       current: index + 1,
       card: card.cardmarketName + ' (' + card.set + ' ' + card.number + ')',
-      completed: Math.max(getDashboardState().completed, index + 1),
+      completed:
+        getDashboardState().completed + (isFirstDashboardCompletion ? 1 : 0),
       added: hasAdded
         ? getDashboardState().added + 1
         : getDashboardState().added,
+      alreadyInCart: alreadyInCart
+        ? getDashboardState().alreadyInCart + 1
+        : getDashboardState().alreadyInCart,
       partial: hasPartial
         ? getDashboardState().partial + 1
         : getDashboardState().partial,
-      skipped: !hasAdded
-        ? getDashboardState().skipped + 1
-        : getDashboardState().skipped,
+      skipped:
+        !hasAdded && !alreadyInCart && !hasPartial
+          ? getDashboardState().skipped + 1
+          : getDashboardState().skipped,
       phase: 'Completed',
       status: [...results.entries()]
         .map(([provider, value]) => {
@@ -547,6 +767,12 @@ async function main() {
               cartQuantities,
               {
                 cartEntries: dorasutaCartEntries,
+                onProgress: () =>
+                  updateDashboard({ phase: 'Searching products' }),
+                onCandidateProgress: (checked) =>
+                  reportCandidateProgress(i, 'dorasuta', checked),
+                onCandidatesReady: (total) =>
+                  reportCandidateTotal(i, 'dorasuta', total),
                 onOffer: (offer) => {
                   dorasutaPrice = offer.price;
                 },
@@ -678,7 +904,12 @@ async function main() {
               manaSourceCartQuantities,
               {
                 cartEntries: manaSourceCartEntries,
-                onProgress: (phase) => updateDashboard({ phase }),
+                onProgress: () =>
+                  updateDashboard({ phase: 'Searching products' }),
+                onCandidateProgress: (checked) =>
+                  reportCandidateProgress(i, 'manasource', checked),
+                onCandidatesReady: (total) =>
+                  reportCandidateTotal(i, 'manasource', total),
               },
             );
             const resultKey = 'MANASOURCE_' + result.status;
@@ -795,7 +1026,12 @@ async function main() {
               paoCartQuantities,
               {
                 cartEntries: paoCartEntries,
-                onProgress: (phase) => updateDashboard({ phase }),
+                onProgress: () =>
+                  updateDashboard({ phase: 'Searching products' }),
+                onCandidateProgress: (checked) =>
+                  reportCandidateProgress(i, 'pao', checked),
+                onCandidatesReady: (total) =>
+                  reportCandidateTotal(i, 'pao', total),
               },
             );
             const resultKey = 'PAO_' + result.status;
@@ -895,7 +1131,12 @@ async function main() {
               torecaCartQuantities,
               {
                 cartEntries: torecaCartEntries,
-                onProgress: (phase) => updateDashboard({ phase }),
+                onProgress: () =>
+                  updateDashboard({ phase: 'Searching products' }),
+                onCandidateProgress: (checked) =>
+                  reportCandidateProgress(i, 'toreca', checked),
+                onCandidatesReady: (total) =>
+                  reportCandidateTotal(i, 'toreca', total),
               },
             );
             const resultKey = 'TORECA_' + result.status;
@@ -980,6 +1221,12 @@ async function main() {
               {
                 commit: false,
                 cartEntries: dorasutaCartEntries,
+                onProgress: () =>
+                  updateDashboard({ phase: 'Searching products' }),
+                onCandidateProgress: (checked) =>
+                  reportCandidateProgress(i, 'dorasuta', checked),
+                onCandidatesReady: (total) =>
+                  reportCandidateTotal(i, 'dorasuta', total),
                 onOffer: (offer) => {
                   dorasutaOffer = offer;
                 },
@@ -999,6 +1246,12 @@ async function main() {
               {
                 commit: false,
                 cartEntries: manaSourceCartEntries,
+                onProgress: () =>
+                  updateDashboard({ phase: 'Searching products' }),
+                onCandidateProgress: (checked) =>
+                  reportCandidateProgress(i, 'manasource', checked),
+                onCandidatesReady: (total) =>
+                  reportCandidateTotal(i, 'manasource', total),
                 onOffer: (offer) => {
                   manaSourceOffer = offer;
                 },
@@ -1014,6 +1267,12 @@ async function main() {
             processPaoCard(paoPage, cards[i], paoCartQuantities, {
               commit: false,
               cartEntries: paoCartEntries,
+              onProgress: () =>
+                updateDashboard({ phase: 'Searching products' }),
+              onCandidateProgress: (checked) =>
+                reportCandidateProgress(i, 'pao', checked),
+              onCandidatesReady: (total) =>
+                reportCandidateTotal(i, 'pao', total),
               onOffer: (offer) => {
                 paoOffer = offer;
               },
@@ -1028,6 +1287,12 @@ async function main() {
             processTorecaCard(torecaPage, cards[i], torecaCartQuantities, {
               commit: false,
               cartEntries: torecaCartEntries,
+              onProgress: () =>
+                updateDashboard({ phase: 'Searching products' }),
+              onCandidateProgress: (checked) =>
+                reportCandidateProgress(i, 'toreca', checked),
+              onCandidatesReady: (total) =>
+                reportCandidateTotal(i, 'toreca', total),
               onOffer: (offer) => {
                 torecaOffer = offer;
               },
@@ -1268,6 +1533,17 @@ async function main() {
     status: 'Completed',
   });
   stopDashboard();
+
+  if (REPORT_ENABLED) {
+    const report = buildCostReport(
+      cards,
+      PROVIDERS,
+      (key) => getCachedProductEntry(key),
+      (card) => getProductCacheKey(card),
+      runStartedAt,
+    );
+    outputLog(formatCostReport(report));
+  }
 
   for (const error of runErrors) {
     outputLog(`ERROR: ${error}`);
@@ -1560,6 +1836,7 @@ async function main() {
 }
 
 main().catch((error) => {
+  stopDashboard();
   console.error('');
   console.error(error.stack ?? error.message);
 
