@@ -28,6 +28,7 @@ const DASHBOARD_STATUS_LABELS = {
   NAME_NOT_RESOLVED: 'Name not resolved',
   PRODUCT_ID_NOT_FOUND: 'Product ID not found',
   CART_QUANTITY_UNKNOWN: 'Cart quantity unknown',
+  NO_ELIGIBLE_OFFER: 'No eligible offer',
   MANASOURCE_ERROR: 'Error',
   CART_FULL: 'Cart full · provider stopped',
   PROVIDER_BLOCKED: 'Provider stopped',
@@ -35,31 +36,66 @@ const DASHBOARD_STATUS_LABELS = {
   NO_RESULT: 'No result',
 };
 
-/** Convert internal result codes into concise text for the live dashboard. */
-/** Format summary keys while preserving the provider that produced them. */
-export function formatSummaryStatus(status) {
-  let provider = null;
-  let result = status;
+const PROVIDER_LABELS = {
+  dorasuta: 'Dorasuta',
+  manasource: 'ManaSource',
+  pao: 'PAO',
+  toreca: 'Toreca',
+  cheapest: 'Cheapest',
+};
 
-  const manaSourceMatch = status.match(/^MANASOURCE_(.+)$/);
+const PROVIDER_ORDER = new Map(
+  Object.keys(PROVIDER_LABELS).map((provider, index) => [provider, index]),
+);
+
+const SUMMARY_RESULT_ORDER = new Map(
+  [
+    'ADDED_TO_CART',
+    'ADDED_TO_CART_PARTIAL_STOCK',
+    'DRY_RUN_OK',
+    'DRY_RUN_PARTIAL_STOCK',
+    'ALREADY_IN_CART',
+    'INSUFFICIENT_STOCK',
+    'NO_ACCEPTABLE_CONDITION',
+    'PRICE_LIMIT',
+    'NO_ELIGIBLE_OFFER',
+    'NO_NUMBER_MATCH',
+    'NO_EXACT_MATCH',
+    'SET_NOT_VERIFIED',
+    'AMBIGUOUS_MATCH',
+    'NAME_NOT_RESOLVED',
+    'PRODUCT_ID_NOT_FOUND',
+    'CART_QUANTITY_UNKNOWN',
+    'CART_FULL',
+    'PROVIDER_BLOCKED',
+    'NO_RESULT',
+    'ERROR',
+  ].map((result, index) => [result, index]),
+);
+
+function getSummaryStatusParts(status: string) {
+  const providerMatch = status.match(/^(MANASOURCE|PAO|TORECA)_(.+)$/);
   const cheapestMatch = status.match(
     /^CHEAPEST_(dorasuta|manasource|pao|toreca)_(.+)$/,
   );
+  const cheapestResultMatch = status.match(/^CHEAPEST_(.+)$/);
 
-  if (manaSourceMatch) {
-    provider = 'ManaSource';
-    result = manaSourceMatch[1];
-  } else if (cheapestMatch) {
-    provider =
-      cheapestMatch[1] === 'manasource'
-        ? 'ManaSource'
-        : cheapestMatch[1] === 'pao'
-          ? 'PAO'
-          : cheapestMatch[1] === 'toreca'
-            ? 'Toreca'
-            : 'Dorasuta';
-    result = cheapestMatch[2];
-  } else if (
+  if (cheapestMatch) {
+    return { provider: cheapestMatch[1], result: cheapestMatch[2] };
+  }
+
+  if (cheapestResultMatch) {
+    return { provider: 'cheapest', result: cheapestResultMatch[1] };
+  }
+
+  if (providerMatch) {
+    return {
+      provider: providerMatch[1].toLowerCase(),
+      result: providerMatch[2],
+    };
+  }
+
+  if (
     [
       'ADDED_TO_CART',
       'ADDED_TO_CART_PARTIAL_STOCK',
@@ -76,14 +112,45 @@ export function formatSummaryStatus(status) {
       'NAME_NOT_RESOLVED',
       'PRODUCT_ID_NOT_FOUND',
       'CART_QUANTITY_UNKNOWN',
+      'CART_FULL',
+      'PROVIDER_BLOCKED',
+      'NO_RESULT',
+      'ERROR',
     ].includes(status)
   ) {
-    provider = 'Dorasuta';
+    return { provider: 'dorasuta', result: status };
   }
 
+  return { provider: null, result: status };
+}
+
+/** Format summary keys while preserving the provider or strategy that produced them. */
+export function formatSummaryStatus(status: string) {
+  const { provider, result } = getSummaryStatusParts(status);
   const label = formatDashboardStatus(result);
 
-  return provider ? provider + ' · ' + label : label;
+  return provider ? PROVIDER_LABELS[provider] + ' · ' + label : label;
+}
+
+/** Sort summary rows by provider and then by a stable result priority. */
+export function sortSummaryEntries(summary: Record<string, number>) {
+  return Object.entries(summary).sort(([left], [right]) => {
+    const leftParts = getSummaryStatusParts(left);
+    const rightParts = getSummaryStatusParts(right);
+    const providerDifference =
+      (PROVIDER_ORDER.get(leftParts.provider ?? '') ??
+        Number.MAX_SAFE_INTEGER) -
+      (PROVIDER_ORDER.get(rightParts.provider ?? '') ??
+        Number.MAX_SAFE_INTEGER);
+
+    if (providerDifference) return providerDifference;
+
+    const resultDifference =
+      (SUMMARY_RESULT_ORDER.get(leftParts.result) ?? Number.MAX_SAFE_INTEGER) -
+      (SUMMARY_RESULT_ORDER.get(rightParts.result) ?? Number.MAX_SAFE_INTEGER);
+
+    return resultDifference || left.localeCompare(right);
+  });
 }
 
 export function formatDashboardStatus(status) {
@@ -96,7 +163,7 @@ export function formatDashboardStatus(status) {
   return status
     .replaceAll('_', ' ')
     .toLowerCase()
-    .replace(/(^| )\w/g, (character) => character.toUpperCase());
+    .replace(/^\w/, (character) => character.toUpperCase());
 }
 
 let dashboardActive = false;

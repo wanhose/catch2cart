@@ -22,6 +22,7 @@ import {
   formatDashboardStatus,
   formatSummaryStatus,
   outputLog,
+  sortSummaryEntries,
   startDashboard,
   stopDashboard,
   updateDashboard,
@@ -1814,7 +1815,7 @@ async function main() {
 
   console.table(
     Object.fromEntries(
-      Object.entries(summary).map(([status, count]) => [
+      sortSummaryEntries(summary).map(([status, count]) => [
         formatSummaryStatus(status),
         count,
       ]),
