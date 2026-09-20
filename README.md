@@ -99,7 +99,16 @@ catch2cart currently supports **Japanese Pokémon cards only**. Its product prov
 
 This focus is intentional: Japanese singles can sometimes be listed on marketplaces such as Cardmarket at substantial reseller mark-ups compared with their local price in yen. Finding even one such card at Dorasuta or ManaSource can make placing an order worthwhile.
 
-When multiple product providers are selected, the final summary reads each cart total and wishlist coverage independently. It also lists the cards added or planned per provider. Totals include products already present in those carts, not only items added during the current run. The optional `--report` is a separate provider-price analysis and does not estimate Cardmarket savings.
+### V-UNION not supported
+
+Pokémon V-UNION cards are not currently supported. Providers usually list them
+as a single product containing all four cards in the V-UNION —for example,
+`226–229/184` or `1セット(4枚)`— rather than as individual products
+identifiable by collector number. The current matching logic works with
+individual cards, so it skips these bundles to avoid selecting or adding the
+wrong product multiple times.
+
+When multiple product providers are selected, the final summary reads each cart total and wishlist coverage independently. It also lists the cards added or planned per provider. Totals include products already present in those carts, not only items added during the current run.
 
 Before searching, catch2cart checks all selected provider carts together. A card whose requested quantity is already complete in any one of those carts is marked as already in cart globally and is not searched or added to another provider.
 
@@ -143,13 +152,15 @@ Product URLs are stored in the provider-neutral product cache. Each provider onl
 
 ### Japanese set metadata cache
 
-The first run downloads public set metadata and stores each code, English name, Japanese name and main-set total in `.set-cache`. It uses the same TTL as `.product-cache` (24 hours by default), so no hand-maintained set dataset is required.
+The first run downloads public set metadata and stores each code, English name, Japanese name and main-set total in `.set-cache`. It uses the same TTL as `.product-cache` (24 hours by default). Releases not yet present in that public table are retained as built-in entries when the cache is loaded or refreshed.
 
-ManaSource matches require a collector number plus a Japanese collection name from that cache. If it is stale, catch2cart refreshes it in a temporary metadata tab and closes that tab immediately. Product searches always use the `XXX/XXX` collector-number/main-set-total format (for example `067/089`), with the card name first; only when that search produces no matching candidates do they fall back to `XXX/XXX` alone. Unpadded forms such as `067/89` and bare collector-number searches are never used because they produce ambiguous results.
+ManaSource matches require a collector number plus a Japanese collection name from that cache. If it is stale, catch2cart refreshes it in a temporary metadata tab and closes that tab immediately. When the main-set total is known, product searches use the zero-padded `XXX/XXX` collector-number/main-set-total format (for example `067/089`), with the card name first and that identifier alone as the fallback. When the total is unavailable, they use the Japanese card name plus `XXX`, then `XXX` alone. `SV-P` and `S-P` instead use their printed identifiers, such as `001/SV-P`.
 
 ## Navigation and verification
 
-The script includes delays between navigations and searches. The default navigation gap is 10 seconds per provider tab, so different providers can search and navigate in parallel while each provider remains paced sequentially. Candidate product pages are inspected sequentially within each provider tab, and the dashboard aggregates their progress across the selected providers. Dorasuta also uses a 15-second search gap. If a provider presents a Cloudflare verification page, it waits for the verification to finish and allows it to be completed manually in the browser window.
+The script includes delays between navigations and searches. The default navigation gap is 10 seconds per provider tab, so different providers can search and navigate in parallel while each provider remains paced sequentially. Candidate product pages are inspected sequentially within each provider tab, and the dashboard aggregates their progress across the selected providers. Dorasuta also uses a 15-second search gap.
+
+Cloudflare is handled as a browser-page state: normal page, verification in progress, pending Turnstile, or error 1006 IP block. Verification and Turnstile remain in the existing Chromium tab until the rendered page has been normal twice in succession. The dashboard identifies pending Turnstile, a stale Cloudflare URL parameter is ignored, and error 1006 stops the Dorasuta provider without retries.
 
 Dorasuta-specific rate-limit pages and cart-full responses stop or delay only the Dorasuta flow. The script does not attempt to bypass site controls.
 
@@ -232,14 +243,6 @@ Use both caches together:
 
     pnpm start -- --use-wishlist-cache --use-product-cache
 
-Use `--report` to print a provider cost comparison after the run. It uses only
-offers observed during that execution, prioritizes completing each requested
-quantity before comparing prices, and separates full, partial and unavailable
-cards. It does not assume stock when the provider does not expose a quantity,
-excludes shipping costs, and cannot calculate savings against Cardmarket because
-the wishlist input does not provide Cardmarket prices. `--cost-report` remains
-accepted as a compatibility alias.
-
 ## Options and configuration
 
 When running in an interactive terminal, catch2cart keeps a compact live
@@ -252,7 +255,6 @@ streaming log is preferable.
 | --commit                          | disabled              | Actually add products to carts.                                    |
 | --verbose                         | disabled              | Keep detailed diagnostic output.                                   |
 | --no-dashboard                    | disabled              | Disable the interactive dashboard.                                 |
-| --report                          | disabled              | Print a provider cost comparison; implies --use-product-cache.     |
 | --current-wishlist                | disabled              | Process only the currently open wishlist.                          |
 | --skip-cardmarket-wishlists       | none                  | Skip wishlist IDs or URLs separated by commas.                     |
 | --providers                       | all                   | Product providers to use, comma-separated.                         |
@@ -293,7 +295,7 @@ Node 24 executes the TypeScript files directly using native type stripping. The 
 
 ### Tests
 
-The test suite uses Node’s built-in node:test runner. Tests cover wishlist parsing and merging, provider-neutral cache keys and migration formats, product matching, quantity selectors, stock handling, provider strategy selection, and current-run cost reports.
+The test suite uses Node’s built-in node:test runner. Tests cover wishlist parsing and merging, provider-neutral cache keys and migration formats, product matching, quantity selectors, stock handling, and provider strategy selection.
 
 Browser/CDP integration depends on a real logged-in browser session and should be exercised manually with dry-run mode.
 
