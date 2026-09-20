@@ -6,6 +6,7 @@
  */
 
 import { DASHBOARD_ENABLED } from './config.ts';
+import { clearScreenDown, moveCursor } from 'node:readline';
 
 const RAW_CONSOLE_LOG = console.log.bind(console);
 
@@ -143,21 +144,15 @@ function renderDashboard() {
     ...dashboardState.errorMessages.map((message) => `Error: ${message}`),
   ];
 
-  const cursorUp = dashboardLineCount ? `\x1b[${dashboardLineCount}A` : '';
-  const clearPrevious = dashboardLineCount
-    ? '\x1b[2K\x1b[1B'.repeat(dashboardLineCount - 1) +
-      '\x1b[2K' +
-      `\x1b[${dashboardLineCount - 1}A`
-    : '';
+  const dashboard = ['catch2cart', ...lines].join('\n') + '\n';
 
-  process.stdout.write(
-    (dashboardLineCount ? '' : 'catch2cart\n') +
-      cursorUp +
-      clearPrevious +
-      '\x1b[0J' +
-      `${lines.join('\n')}\n`,
-  );
-  dashboardLineCount = lines.length;
+  if (dashboardLineCount) {
+    moveCursor(process.stdout, 0, -dashboardLineCount);
+    clearScreenDown(process.stdout);
+  }
+
+  process.stdout.write((dashboardLineCount ? '' : '\n') + dashboard);
+  dashboardLineCount = lines.length + 1;
 }
 
 /** Merge state changes and redraw the dashboard when it is enabled. */
