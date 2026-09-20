@@ -542,7 +542,6 @@ async function main() {
 
   const summary: Record<string, number> = {};
   const runErrors = [];
-  const notFoundCards = [];
   const stockIssues = [];
   const priceIssues = [];
   const notFoundStatuses = new Set([
@@ -795,13 +794,6 @@ async function main() {
             const cardDescription =
               `${cards[i].quantity} × ${cards[i].cardmarketName} ` +
               `(${cards[i].set} ${cards[i].number})`;
-
-            if (notFoundStatuses.has(status)) {
-              notFoundCards.push({
-                card: cardDescription,
-                status,
-              });
-            }
 
             if (stockStatuses.has(status)) {
               stockIssues.push({
@@ -1741,7 +1733,8 @@ async function main() {
 
   const unresolvedByCard = cards
     .map((card, index) => {
-      const providerFailures = [...completedProviderCards[index].entries()]
+      const providerResults = [...completedProviderCards[index].entries()];
+      const providerFailures = providerResults
         .filter(([, result]) => notFoundStatuses.has(result.status))
         .map(([provider, result]) => ({
           provider:
@@ -1749,11 +1742,16 @@ async function main() {
               ? 'ManaSource'
               : provider === 'pao'
                 ? 'PAO'
-                : 'Dorasuta',
+                : provider === 'toreca'
+                  ? 'Toreca'
+                  : 'Dorasuta',
           status: result.status,
         }));
 
-      return providerFailures.length
+      // A provider-specific miss does not make the card unresolved: another
+      // provider may already have added it or confirmed it in its cart.
+      return providerFailures.length === providerResults.length &&
+        providerFailures.length
         ? {
             card:
               card.quantity +
@@ -1773,7 +1771,7 @@ async function main() {
   if (unresolvedByCard.length) {
     outputLog('');
     outputLog(
-      'Cards not found or not verified: ' +
+      'Cards not found or not verified by any provider: ' +
         unresolvedByCard.length +
         ' card(s)',
     );
