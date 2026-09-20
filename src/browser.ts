@@ -21,9 +21,8 @@ import {
 } from './config.ts';
 import { outputLog, updateDashboard } from './output.ts';
 
-let lastNavigationAt = 0;
+const navigationStates = new WeakMap();
 let lastDorasutaSearchAt = 0;
-let navigationQueue = Promise.resolve();
 
 /** Resolve after the requested delay without blocking the event loop. */
 function sleep(milliseconds) {
@@ -32,29 +31,42 @@ function sleep(milliseconds) {
   });
 }
 
-/** Enforce the global minimum delay between any two navigations. */
-async function waitForNavigationGap() {
+/**
+ * Acquire the navigation slot for one provider tab.
+ *
+ * The slot stays held until the caller releases it. Keeping it held across
+ * `page.goto()` is important: pacing alone does not prevent two workflows
+ * from navigating the same Playwright page at the same time.
+ */
+async function waitForNavigationGap(page) {
+  let state = navigationStates.get(page);
+
+  if (!state) {
+    state = {
+      lastNavigationAt: 0,
+      queue: Promise.resolve(),
+    };
+    navigationStates.set(page, state);
+  }
+
   let release: () => void = () => {};
   const turn = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const previous = navigationQueue;
+  const previous = state.queue;
 
-  navigationQueue = previous.then(() => turn);
+  state.queue = previous.then(() => turn);
   await previous;
 
-  try {
-    const elapsed = Date.now() - lastNavigationAt;
-    const remaining = NAVIGATION_GAP_MS - elapsed;
+  const elapsed = Date.now() - state.lastNavigationAt;
+  const remaining = NAVIGATION_GAP_MS - elapsed;
 
-    if (remaining > 0) {
-      await sleep(remaining);
-    }
-
-    lastNavigationAt = Date.now();
-  } finally {
-    release();
+  if (remaining > 0) {
+    await sleep(remaining);
   }
+
+  state.lastNavigationAt = Date.now();
+  return release;
 }
 
 /** Enforce the longer minimum delay reserved for Dorasuta searches. */
@@ -83,21 +95,50 @@ async function isCloudflareChallenge(page) {
       const title = document.title ?? '';
       const body = document.body?.innerText ?? '';
       const text = `${title}\n${body}`.slice(0, 20_000);
-      const challengeElement = document.querySelector(
-        '#challenge-running, #challenge-stage, ' +
+
+      const isVisible = (element) => {
+        if (!element) return false;
+
+        const style = globalThis.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+
+        return (
+          style.display !== 'none' &&
+          style.visibility !== 'hidden' &&
+          style.opacity !== '0' &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+
+      const strongChallengeText =
+        /just a moment|checking your browser|verifying you are human|performing security verification/i.test(
+          text,
+        );
+      const genericChallengeText =
+        text.length < 2_000 && /enable javascript and cookies/i.test(text);
+      const activeChallengeElement = [
+        ...document.querySelectorAll('#challenge-running, #challenge-stage'),
+      ].some(isVisible);
+      const activeTurnstileFrame = [
+        ...document.querySelectorAll(
           'iframe[src*="challenges.cloudflare.com"]',
-      );
-      const emptyTurnstile = [
+        ),
+      ].some(isVisible);
+      const turnstileInputs = [
         ...document.querySelectorAll('input[name="cf-turnstile-response"]'),
-      ].some((input) => !(input as HTMLInputElement).value);
+      ];
+      const hasTurnstileToken = turnstileInputs.some((input) =>
+        Boolean((input as HTMLInputElement).value.trim()),
+      );
 
       return Boolean(
-        challengeElement ||
-        emptyTurnstile ||
-        /just a moment/i.test(title) ||
-        /checking your browser|verifying you are human|performing security verification|enable javascript and cookies/i.test(
-          text,
-        ),
+        strongChallengeText ||
+        genericChallengeText ||
+        activeChallengeElement ||
+        (activeTurnstileFrame &&
+          turnstileInputs.length > 0 &&
+          !hasTurnstileToken),
       );
     });
   } catch {
@@ -123,8 +164,11 @@ async function waitForCloudflare(page) {
 
   while (await isCloudflareChallenge(page)) {
     if (Date.now() - startedAt >= CLOUDFLARE_MAX_WAIT_MS) {
-      throw new Error(
-        `Cloudflare verification did not finish within ${CLOUDFLARE_MAX_WAIT_MS} ms.`,
+      throw Object.assign(
+        new Error(
+          `Cloudflare verification did not finish within ${CLOUDFLARE_MAX_WAIT_MS} ms.`,
+        ),
+        { code: 'CLOUDFLARE_TIMEOUT' },
       );
     }
 
@@ -175,7 +219,12 @@ async function throwIfDorasutaIpBlocked(page) {
 }
 
 /** Wait through Dorasuta's explicit rate-limit page with bounded retries. */
-async function waitForDorasutaAvailability(page, url, options) {
+async function waitForDorasutaAvailability(
+  page,
+  url,
+  options,
+  navigationRelease,
+) {
   const startedAt = Date.now();
   let retryNumber = 0;
 
@@ -195,7 +244,7 @@ async function waitForDorasutaAvailability(page, url, options) {
     );
 
     await page.waitForTimeout(DORASUTA_RATE_LIMIT_RETRY_MS);
-    await gotoPageWithRetries(page, url, options);
+    await gotoPageWithRetries(page, url, options, navigationRelease);
     await throwIfDorasutaIpBlocked(page);
     await waitForCloudflare(page);
   }
@@ -208,9 +257,15 @@ function isRetryableNavigationError(error) {
 }
 
 /** Navigate with bounded retries for transient browser or network failures. */
-async function gotoPageWithRetries(page, url, options) {
+async function gotoPageWithRetries(
+  page,
+  url,
+  options,
+  navigationRelease = null,
+) {
   for (let attempt = 0; ; attempt++) {
-    await waitForNavigationGap();
+    const releaseNavigation =
+      navigationRelease ?? (await waitForNavigationGap(page));
 
     try {
       return await page.goto(url, options);
@@ -227,6 +282,10 @@ async function gotoPageWithRetries(page, url, options) {
       outputLog(
         `  Navigation failed; retrying (${attempt + 1}/${NAVIGATION_RETRY_ATTEMPTS})...`,
       );
+    } finally {
+      if (!navigationRelease) {
+        releaseNavigation();
+      }
     }
   }
 }
@@ -252,22 +311,27 @@ function samePageUrl(currentUrl, targetUrl) {
  * request is made.
  */
 export async function gotoAndWait(page, url, options = {}) {
-  await throwIfDorasutaIpBlocked(page);
+  const releaseNavigation = await waitForNavigationGap(page);
 
-  let result = null;
+  try {
+    await throwIfDorasutaIpBlocked(page);
 
-  if (samePageUrl(page.url(), url)) {
-    await waitForNavigationGap();
-    const hostname = new URL(url).hostname;
-    outputLog(`  Reusing ${hostname} page after pacing delay: ${url}`);
-  } else {
-    result = await gotoPageWithRetries(page, url, options);
+    let result = null;
+
+    if (samePageUrl(page.url(), url)) {
+      const hostname = new URL(url).hostname;
+      outputLog(`  Reusing ${hostname} page after pacing delay: ${url}`);
+    } else {
+      result = await gotoPageWithRetries(page, url, options, releaseNavigation);
+    }
+
+    await throwIfDorasutaIpBlocked(page);
+    await waitForCloudflare(page);
+    await waitForDorasutaAvailability(page, url, options, releaseNavigation);
+    return result;
+  } finally {
+    releaseNavigation();
   }
-
-  await throwIfDorasutaIpBlocked(page);
-  await waitForCloudflare(page);
-  await waitForDorasutaAvailability(page, url, options);
-  return result;
 }
 
 /** Connect to the user's existing Chromium context over CDP. */
@@ -315,6 +379,10 @@ export async function getOrCreatePage(context, hostname, fallbackUrl) {
       timeout: NAVIGATION_TIMEOUT_MS,
     });
   } catch (error) {
+    if (error.code === 'CLOUDFLARE_TIMEOUT') {
+      throw error;
+    }
+
     outputLog(`Navigation warning for ${hostname}: ${error.message}`);
     await throwIfDorasutaIpBlocked(page);
     await waitForCloudflare(page);
