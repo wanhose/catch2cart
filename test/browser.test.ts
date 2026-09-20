@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   classifyCloudflareState,
+  gotoAndWait,
   inspectCloudflare,
+  isDorasutaUrl,
   waitForCloudflare,
 } from '../src/browser.ts';
 
@@ -17,6 +19,36 @@ function cloudflareSignals(overrides = {}) {
     ...overrides,
   };
 }
+
+test('applies Dorasuta controls only to the Dorasuta hostname', () => {
+  assert.equal(
+    isDorasutaUrl('https://dorasuta.jp/pokemon-card/product?pid=458388'),
+    true,
+  );
+  assert.equal(isDorasutaUrl('https://www.manasource.net/product/1'), false);
+  assert.equal(isDorasutaUrl('https://pao-onlineshop.com/cart'), false);
+  assert.equal(isDorasutaUrl('https://torecacamp-pokemon.com/cart'), false);
+});
+
+test('does not evaluate Dorasuta controls for a ManaSource navigation', async () => {
+  let currentUrl = 'https://www.manasource.net/';
+  let evaluations = 0;
+  const page = {
+    url: () => currentUrl,
+    goto: async (url) => {
+      currentUrl = url;
+      return null;
+    },
+    evaluate: async () => {
+      evaluations++;
+      return cloudflareSignals();
+    },
+  };
+
+  await gotoAndWait(page, 'https://www.manasource.net/product/1');
+
+  assert.equal(evaluations, 0);
+});
 
 test('does not wait forever when Dorasuta leaves a challenge token in the settled URL', async () => {
   let polls = 0;

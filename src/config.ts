@@ -275,9 +275,9 @@ export const PRODUCT_CACHE_TTL_HOURS = getNumericOption(
 export const USE_CARDMARKET_CACHE = USE_WISHLIST_CACHE;
 export const CLEAR_CARDMARKET_CACHE = CLEAR_WISHLIST_CACHE;
 
-export const NAVIGATION_GAP_MS = getNumericOption(
-  '--navigation-gap-ms',
-  'NAVIGATION_GAP_MS',
+export const DORASUTA_NAVIGATION_GAP_MS = getNumericOption(
+  '--dorasuta-navigation-gap-ms',
+  'DORASUTA_NAVIGATION_GAP_MS',
   10_000,
 );
 

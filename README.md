@@ -158,9 +158,9 @@ ManaSource matches require a collector number plus a Japanese collection name fr
 
 ## Navigation and verification
 
-The script includes delays between navigations and searches. The default navigation gap is 10 seconds per provider tab, so different providers can search and navigate in parallel while each provider remains paced sequentially. Candidate product pages are inspected sequentially within each provider tab, and the dashboard aggregates their progress across the selected providers. Dorasuta also uses a 15-second search gap.
+ManaSource, PAO and Toreca navigate immediately. Their shared browser tabs remain serialized so one workflow cannot replace another workflow's page. Candidate product pages are inspected sequentially within each provider tab, and the dashboard aggregates their progress across the selected providers.
 
-Cloudflare is handled as a browser-page state: normal page, verification in progress, pending Turnstile, or error 1006 IP block. Verification and Turnstile remain in the existing Chromium tab until the rendered page has been normal twice in succession. The dashboard identifies pending Turnstile, a stale Cloudflare URL parameter is ignored, and error 1006 stops the Dorasuta provider without retries.
+Dorasuta alone uses a 10-second minimum navigation gap and a 15-second search gap. Its Cloudflare handling is a browser-page state: normal page, verification in progress, pending Turnstile, or error 1006 IP block. Verification and Turnstile remain in the existing Chromium tab until the rendered page has been normal twice in succession. The dashboard identifies pending Turnstile, a stale Cloudflare URL parameter is ignored, and error 1006 stops the Dorasuta provider without retries.
 
 Dorasuta-specific rate-limit pages and cart-full responses stop or delay only the Dorasuta flow. The script does not attempt to bypass site controls.
 
@@ -271,10 +271,10 @@ streaming log is preferable.
 | --wishlist-cache-file             | .wishlist-cache       | Wishlist cache path.                                               |
 | --product-cache-file              | .product-cache        | Provider-neutral product cache path.                               |
 | --cdp-endpoint                    | http://127.0.0.1:9222 | Browser CDP endpoint.                                              |
-| --navigation-gap-ms               | 10000                 | Minimum delay between navigations in each provider tab.            |
+| --dorasuta-navigation-gap-ms      | 10000                 | Minimum delay between Dorasuta navigations.                        |
 | --navigation-retry-attempts       | 2                     | Additional attempts for transient navigation failures.             |
-| --cloudflare-poll-ms              | 3000                  | Cloudflare polling interval.                                       |
-| --cloudflare-max-wait-ms          | 600000                | Maximum Cloudflare wait.                                           |
+| --cloudflare-poll-ms              | 3000                  | Dorasuta Cloudflare polling interval.                              |
+| --cloudflare-max-wait-ms          | 600000                | Maximum Dorasuta Cloudflare wait.                                  |
 | --dorasuta-search-gap-ms          | 15000                 | Minimum delay between Dorasuta searches.                           |
 | --dorasuta-rate-limit-retry-ms    | 60000                 | Wait between Dorasuta rate-limit retries.                          |
 | --dorasuta-rate-limit-max-wait-ms | 900000                | Maximum wait for a Dorasuta rate-limit page.                       |

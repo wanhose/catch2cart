@@ -6,14 +6,17 @@ import {
 } from '../src/config.ts';
 
 test('parses non-negative numeric options', () => {
-  assert.equal(parseNonNegativeNumber('--navigation-gap-ms', '1234'), 1234);
-  assert.equal(parseNonNegativeNumber('--navigation-gap-ms', '0'), 0);
+  assert.equal(
+    parseNonNegativeNumber('--dorasuta-navigation-gap-ms', '1234'),
+    1234,
+  );
+  assert.equal(parseNonNegativeNumber('--dorasuta-navigation-gap-ms', '0'), 0);
   assert.throws(
-    () => parseNonNegativeNumber('--navigation-gap-ms', '-1'),
+    () => parseNonNegativeNumber('--dorasuta-navigation-gap-ms', '-1'),
     /must be a non-negative number/,
   );
   assert.throws(
-    () => parseNonNegativeNumber('--navigation-gap-ms', 'invalid'),
+    () => parseNonNegativeNumber('--dorasuta-navigation-gap-ms', 'invalid'),
     /must be a non-negative number/,
   );
 });

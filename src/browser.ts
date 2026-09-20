@@ -1,9 +1,9 @@
 /**
  * Browser/CDP navigation boundary.
  *
- * All page navigations go through `gotoAndWait`. That boundary paces
- * requests, waits for manual Cloudflare checks, handles Dorasuta rate limits,
- * reuses an already-loaded URL, and stops on an explicit IP block.
+ * All page navigations go through `gotoAndWait`. Dorasuta receives pacing,
+ * verification and rate-limit handling; other providers navigate immediately
+ * while still serializing access to their shared browser tab.
  */
 
 import { chromium } from 'playwright';
@@ -12,10 +12,10 @@ import {
   CLOUDFLARE_MAX_WAIT_MS,
   CLOUDFLARE_POLL_MS,
   DEFAULT_TIMEOUT_MS,
+  DORASUTA_NAVIGATION_GAP_MS,
   DORASUTA_RATE_LIMIT_MAX_WAIT_MS,
   DORASUTA_RATE_LIMIT_RETRY_MS,
   DORASUTA_SEARCH_GAP_MS,
-  NAVIGATION_GAP_MS,
   NAVIGATION_RETRY_ATTEMPTS,
   NAVIGATION_TIMEOUT_MS,
 } from './config.ts';
@@ -23,6 +23,7 @@ import { outputLog, updateDashboard } from './output.ts';
 
 const navigationStates = new WeakMap();
 let lastDorasutaSearchAt = 0;
+const DORASUTA_HOSTNAME = 'dorasuta.jp';
 
 /** Resolve after the requested delay without blocking the event loop. */
 function sleep(milliseconds) {
@@ -32,13 +33,15 @@ function sleep(milliseconds) {
 }
 
 /**
- * Acquire the navigation slot for one provider tab.
+ * Acquire the navigation slot for one provider tab. Only Dorasuta receives a
+ * minimum gap; every provider retains the slot to prevent concurrent use of
+ * the same Playwright page.
  *
  * The slot stays held until the caller releases it. Keeping it held across
  * `page.goto()` is important: pacing alone does not prevent two workflows
  * from navigating the same Playwright page at the same time.
  */
-async function waitForNavigationGap(page) {
+async function acquireNavigationSlot(page, paceDorasuta = false) {
   let state = navigationStates.get(page);
 
   if (!state) {
@@ -59,14 +62,24 @@ async function waitForNavigationGap(page) {
   await previous;
 
   const elapsed = Date.now() - state.lastNavigationAt;
-  const remaining = NAVIGATION_GAP_MS - elapsed;
+  const remaining = paceDorasuta ? DORASUTA_NAVIGATION_GAP_MS - elapsed : 0;
 
   if (remaining > 0) {
     await sleep(remaining);
   }
 
-  state.lastNavigationAt = Date.now();
+  if (paceDorasuta) {
+    state.lastNavigationAt = Date.now();
+  }
   return release;
+}
+
+export function isDorasutaUrl(url: string) {
+  try {
+    return new URL(url).hostname.toLowerCase() === DORASUTA_HOSTNAME;
+  } catch {
+    return false;
+  }
 }
 
 /** Enforce the longer minimum delay reserved for Dorasuta searches. */
@@ -362,12 +375,15 @@ async function gotoPageWithRetries(
 ) {
   for (let attempt = 0; ; attempt++) {
     const releaseNavigation =
-      navigationRelease ?? (await waitForNavigationGap(page));
+      navigationRelease ??
+      (await acquireNavigationSlot(page, isDorasutaUrl(url)));
 
     try {
       return await page.goto(url, options);
     } catch (error) {
-      await throwIfDorasutaIpBlocked(page);
+      if (isDorasutaUrl(url)) {
+        await throwIfDorasutaIpBlocked(page);
+      }
 
       if (
         !isRetryableNavigationError(error) ||
@@ -408,10 +424,13 @@ function samePageUrl(currentUrl, targetUrl) {
  * request is made.
  */
 export async function gotoAndWait(page, url, options = {}) {
-  const releaseNavigation = await waitForNavigationGap(page);
+  const isDorasuta = isDorasutaUrl(url);
+  const releaseNavigation = await acquireNavigationSlot(page, isDorasuta);
 
   try {
-    await throwIfDorasutaIpBlocked(page);
+    if (isDorasuta) {
+      await throwIfDorasutaIpBlocked(page);
+    }
 
     let result = null;
 
@@ -422,9 +441,11 @@ export async function gotoAndWait(page, url, options = {}) {
       result = await gotoPageWithRetries(page, url, options, releaseNavigation);
     }
 
-    await throwIfDorasutaIpBlocked(page);
-    await waitForCloudflare(page);
-    await waitForDorasutaAvailability(page, url, options, releaseNavigation);
+    if (isDorasuta) {
+      await throwIfDorasutaIpBlocked(page);
+      await waitForCloudflare(page);
+      await waitForDorasutaAvailability(page, url, options, releaseNavigation);
+    }
     return result;
   } finally {
     releaseNavigation();
@@ -462,8 +483,10 @@ export async function getOrCreatePage(context, hostname, fallbackUrl) {
 
   if (existing) {
     outputLog(`Using existing ${hostname} tab: ${existing.url()}`);
-    await throwIfDorasutaIpBlocked(existing);
-    await waitForCloudflare(existing);
+    if (hostname === DORASUTA_HOSTNAME) {
+      await throwIfDorasutaIpBlocked(existing);
+      await waitForCloudflare(existing);
+    }
     return existing;
   }
 
@@ -481,8 +504,10 @@ export async function getOrCreatePage(context, hostname, fallbackUrl) {
     }
 
     outputLog(`Navigation warning for ${hostname}: ${error.message}`);
-    await throwIfDorasutaIpBlocked(page);
-    await waitForCloudflare(page);
+    if (hostname === DORASUTA_HOSTNAME) {
+      await throwIfDorasutaIpBlocked(page);
+      await waitForCloudflare(page);
+    }
     outputLog(`Current URL: ${page.url()}`);
   }
 
