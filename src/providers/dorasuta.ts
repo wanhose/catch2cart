@@ -592,6 +592,12 @@ async function readCartEntries(page) {
   return entries;
 }
 
+function isInsufficientStockAlert(message) {
+  return /在庫が不足しています。?カートの数量を調整してください。?/.test(
+    normalizeWhitespace(message),
+  );
+}
+
 /**
  * Add to cart and do not continue navigating until the cart counter rises.
  *
@@ -600,7 +606,7 @@ async function readCartEntries(page) {
  * - the next card is not processed until the counter increases
  */
 async function addToCartAndWait(page, addButton) {
-  const before = lastKnownCartCount ?? (await readCartCount(page));
+  const before = (await readCartCount(page)) ?? lastKnownCartCount;
 
   let alertMessage = null;
   let cartFull = false;
@@ -610,6 +616,12 @@ async function addToCartAndWait(page, addButton) {
 
   const isCartFullAlert = (message) =>
     /カートがいっぱいです/.test(normalizeWhitespace(message));
+
+  const createAlertError = (message) =>
+    Object.assign(new Error(`Dorasuta alert: ${message}`), {
+      code: 'DORASUTA_ALERT',
+      alertMessage: message,
+    });
 
   const isRetryableCartAlert = (message) =>
     /カート登録に失敗しました。?再度処理を実施してください/.test(
@@ -677,7 +689,7 @@ async function addToCartAndWait(page, addButton) {
             continue;
           }
 
-          throw new Error(`Dorasuta alert: ${alertMessage}`);
+          throw createAlertError(alertMessage);
         }
 
         const handle = await page.waitForFunction(
@@ -731,7 +743,7 @@ async function addToCartAndWait(page, addButton) {
         }
 
         if (alertMessage) {
-          throw new Error(`Dorasuta alert: ${alertMessage}`);
+          throw createAlertError(alertMessage);
         }
 
         throw new Error(
@@ -743,6 +755,8 @@ async function addToCartAndWait(page, addButton) {
     page.off('dialog', handleDialog);
   }
 }
+
+export { isInsufficientStockAlert };
 
 export {
   addToCartAndWait,

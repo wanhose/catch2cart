@@ -39,7 +39,9 @@ import {
   inspectProduct,
   isCompatibleCachedProduct,
   isExactMatch,
+  isInsufficientStockAlert,
   isLastResortNumberAndTotalMatch,
+  readCartEntries,
   searchDorasuta,
   setQuantity,
 } from '../dorasuta.ts';
@@ -508,7 +510,62 @@ export async function processDorasutaCard(
 
   await setQuantity(chosen.quantitySelect, quantityToAddNow);
 
-  const cartCount = await addToCartAndWait(page, chosen.addButton);
+  let cartCount;
+  try {
+    cartCount = await addToCartAndWait(page, chosen.addButton);
+  } catch (error) {
+    let refreshedQuantity = null;
+
+    try {
+      refreshedQuantity =
+        (await readCartEntries(page)).find(
+          (entry) => entry.productId === productId,
+        )?.quantity ?? null;
+    } catch {
+      throw error;
+    }
+
+    if (Number.isInteger(refreshedQuantity) && refreshedQuantity >= 0) {
+      cartQuantities.set(productId, refreshedQuantity);
+
+      if (
+        error.code === 'DORASUTA_ALERT' &&
+        isInsufficientStockAlert(error.alertMessage) &&
+        refreshedQuantity >= card.quantity
+      ) {
+        outputLog(
+          `  Cart already has ${refreshedQuantity}/${card.quantity}; stock alert reconciled.`,
+        );
+        return 'ALREADY_IN_CART';
+      }
+
+      if (refreshedQuantity >= currentCartQuantity + quantityToAddNow) {
+        outputLog(
+          `  Cart quantity verified after add: ${refreshedQuantity}/${card.quantity}.`,
+        );
+        return missingQuantity > 0
+          ? 'ADDED_TO_CART_PARTIAL_STOCK'
+          : 'ADDED_TO_CART';
+      }
+
+      if (refreshedQuantity > currentCartQuantity) {
+        outputLog(
+          `  Cart quantity partially updated: ${refreshedQuantity}/${card.quantity}.`,
+        );
+        return 'ADDED_TO_CART_PARTIAL_STOCK';
+      }
+    }
+
+    if (
+      error.code === 'DORASUTA_ALERT' &&
+      isInsufficientStockAlert(error.alertMessage)
+    ) {
+      outputLog('  SKIP: Dorasuta confirmed that this quantity is sold out.');
+      return 'INSUFFICIENT_STOCK';
+    }
+
+    throw error;
+  }
 
   outputLog(`  ADDED TO CART | cart=${cartCount}`);
 

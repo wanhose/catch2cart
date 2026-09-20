@@ -5,6 +5,7 @@ import {
   filterCandidatesByNumber,
   isCompatibleCachedProduct,
   isExactMatch,
+  isInsufficientStockAlert,
   isLastResortNumberAndTotalMatch,
   setQuantity,
 } from '../src/providers/dorasuta.ts';
@@ -270,4 +271,14 @@ test('handles selectors safely when quantity one has no selector', async () => {
 
   await setQuantity(select, 2);
   assert.equal(selected, '2');
+});
+
+test('recognizes a Dorasuta stock alert that requires cart reconciliation', () => {
+  assert.equal(
+    isInsufficientStockAlert(
+      '在庫が不足しています。カートの数量を調整してください。',
+    ),
+    true,
+  );
+  assert.equal(isInsufficientStockAlert('商品をカートに追加しました。'), false);
 });
