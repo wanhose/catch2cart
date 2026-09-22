@@ -15,61 +15,38 @@ The project runs against an existing Chromium-based browser session through Play
 
 catch2cart reuses existing provider tabs. If a product-provider tab is missing, it opens one for every implemented product provider during startup, including providers not selected for the current run. Log in and complete any verification manually before starting it when possible, and keep the browser open while it runs.
 
-## Start a Chromium-based browser with CDP
+## Start a temporary Chromium session with CDP
 
-Use a separate browser profile so an already-running browser process does not prevent the debugging port from being enabled. The executable name depends on the browser and operating system.
+catch2cart never launches your browser itself: it only attaches to the CDP session you start. Use a temporary, incognito profile by default so the run does not open, read, or alter your everyday browser profile. Keep the command in the foreground; the temporary profile is removed only after the browser closes.
 
-Chromium:
-
-```bash
-chromium \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$PWD/.chromium-profile"
-```
-
-Google Chrome:
+Google Chrome on Linux:
 
 ```bash
+PROFILE="$(mktemp -d)"
 google-chrome \
+  --remote-debugging-address=127.0.0.1 \
   --remote-debugging-port=9222 \
-  --user-data-dir="$PWD/.chromium-profile"
+  --incognito \
+  --user-data-dir="$PROFILE" \
+  --no-first-run \
+  --no-default-browser-check \
+  --blink-settings=imagesEnabled=false
+rm -rf "$PROFILE"
 ```
 
-Microsoft Edge:
+Replace `google-chrome` with `chromium`, `microsoft-edge`, `brave-browser`, `vivaldi`, or `opera` as appropriate. On macOS and Windows, use the browser's full application path when it is not available on `PATH`.
+
+`--blink-settings=imagesEnabled=false` prevents normal page images from loading or rendering, reducing bandwidth and visual noise. It does not block every visual asset: sites can render them through CSS backgrounds, canvas, SVG, or JavaScript.
+
+For a stricter temporary session, append these flags to the browser command:
 
 ```bash
-microsoft-edge \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$PWD/.chromium-profile"
+--disable-background-networking \
+--disable-sync \
+--disable-component-update
 ```
 
-Brave:
-
-```bash
-brave-browser \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$PWD/.chromium-profile"
-```
-
-Vivaldi:
-
-```bash
-vivaldi \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$PWD/.chromium-profile"
-```
-
-Opera:
-
-```bash
-opera \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$PWD/.chromium-profile"
-```
-
-On macOS and Windows, replace the executable with the browser's full application path when it is not available on `PATH`. Common names include `Google Chrome`, `Microsoft Edge`, `Brave Browser`, `Vivaldi`, and `Opera`.
-
-Open Cardmarket in that window, complete any login or Cloudflare verification manually, and then run the script. Missing product-provider tabs are opened automatically.
+The temporary profile starts without your usual cookies, extensions, or saved login. Open Cardmarket in that window and complete any login or Cloudflare verification manually before running the script; missing product-provider tabs are opened automatically. If you deliberately want to retain that session between runs, replace `"$PROFILE"` with a dedicated directory such as `"$PWD/.chromium-profile"` and omit the final removal command.
 
 Install dependencies:
 
@@ -168,7 +145,7 @@ Dorasuta-specific rate-limit pages and cart-full responses stop or delay only th
 
 This project runs locally on your computer. It does not use a project-owned API, telemetry service, analytics endpoint, remote database, or data-collection backend. It does not send your wishlist, credentials, or cart contents to the author or to any third-party service operated by this project.
 
-The script only drives the browser session you explicitly connect through CDP. Network requests go directly from that browser to the selected wishlist and product providers. Authentication cookies remain in your local browser profile, and generated cache files remain local and are ignored by Git.
+The script only drives the browser session you explicitly connect through CDP. Network requests go directly from that browser to the selected wishlist and product providers. Authentication cookies remain in the browser profile you chose (temporary when following the recommended command), and generated cache files remain local and are ignored by Git.
 
 No browser is closed automatically, no credentials are read from disk by the script, and no local data is uploaded by the project. Use a profile you control, review the source, and follow the terms and rate limits of the websites involved.
 
